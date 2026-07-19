@@ -7,6 +7,7 @@ import {
 import { api, NodeDetail as NodeDetailType, CommandRecord } from '../api/client'
 import { useAuth } from '../store/auth'
 import HelpButton from '../components/HelpButton'
+import ContextMenu from '../components/ContextMenu'
 
 const PAGE_SIZE = 15
 
@@ -269,6 +270,7 @@ export default function NodeDetail() {
   const canAct = user?.role === 'admin' || user?.role === 'analyst'
   const [node, setNode] = useState<NodeDetailType | null>(null)
   const [commands, setCommands] = useState<CommandRecord[]>([])
+  const [procMenu, setProcMenu] = useState<{ x: number; y: number; pid: number; name: string } | null>(null)
   const [tab, setTabState] = useState<Tab>('overview')
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
@@ -328,6 +330,11 @@ export default function NodeDetail() {
     await api.queueCommand(Number(id), type, payload)
     setShowRunCommand(false)
     setCommands(await api.getNodeCommands(Number(id)))
+  }
+
+  const killProcess = (pid: number, name: string) => {
+    if (!confirm(`Kill process "${name}" (PID ${pid})?\n\nThis runs the next time the node checks in. Killing the wrong process can crash apps or destabilize the machine — make sure that's intended.`)) return
+    queueCommand('kill_process', { pid })
   }
 
   if (loading || !node) {
@@ -541,7 +548,15 @@ export default function NodeDetail() {
             </thead>
             <tbody className="divide-y divide-gray-800/50">
               {pagedProcesses.map(p => (
-                <tr key={p.pid} className="hover:bg-gray-800/30 transition-colors">
+                <tr
+                  key={p.pid}
+                  className="hover:bg-gray-800/30 transition-colors"
+                  onContextMenu={e => {
+                    if (!canAct) return
+                    e.preventDefault()
+                    setProcMenu({ x: e.clientX, y: e.clientY, pid: p.pid, name: p.name })
+                  }}
+                >
                   <td className="px-5 py-2.5 text-white text-xs font-mono">{p.pid}</td>
                   <td className="px-5 py-2.5 text-white">{p.name}</td>
                   <td className="px-5 py-2.5 text-white text-xs">{p.cpu_pct?.toFixed(1) ?? '—'}</td>
@@ -636,6 +651,16 @@ export default function NodeDetail() {
       )}
       {showOverrideCode && id && (
         <OverrideCodeModal nodeId={Number(id)} onClose={() => setShowOverrideCode(false)} />
+      )}
+      {procMenu && (
+        <ContextMenu
+          x={procMenu.x}
+          y={procMenu.y}
+          onClose={() => setProcMenu(null)}
+          items={[
+            { label: `Kill Process (PID ${procMenu.pid})`, onClick: () => killProcess(procMenu.pid, procMenu.name), danger: true },
+          ]}
+        />
       )}
     </div>
   )
