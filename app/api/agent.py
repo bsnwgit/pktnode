@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import secrets
 from datetime import datetime, timezone
 from typing import Optional
@@ -24,6 +25,7 @@ from app.database import get_db
 from app.dependencies import CurrentNode, DbDep, hash_agent_token
 from app import totp
 
+log = logging.getLogger("pktnode.agent")
 router = APIRouter()
 
 
@@ -52,6 +54,7 @@ class EnrollRequest(BaseModel):
     os_version: str = ""
     arch: str = ""
     agent_version: str = ""
+    serial_number: str = ""
 
 
 @router.post("/enroll", status_code=201)
@@ -76,10 +79,29 @@ async def enroll(body: EnrollRequest, db: DbDep) -> dict:
     if max_uses is not None and use_count >= max_uses:
         raise HTTPException(status_code=401, detail="Enrollment token has reached its use limit")
 
-    # Upsert the node by agent_uuid — reinstalling the agent on the same
-    # machine re-enrolls it rather than creating a duplicate row.
+    # Upsert the node by agent_uuid — reinstalling the agent on top of an
+    # existing install (its local config/agent_uuid survived) re-enrolls
+    # it rather than creating a duplicate row.
     async with db.execute("SELECT id FROM nodes WHERE agent_uuid=?", (body.agent_uuid,)) as cur:
         existing = await cur.fetchone()
+
+    # A full wipe/reinstall generates a brand-new agent_uuid (it's only
+    # ever persisted in the agent's local config), so the lookup above
+    # misses it even though it's the same physical machine. Fall back to
+    # matching a *decommissioned* node by hardware serial number — a real,
+    # stable hardware identity that survives a wipe — so it's revived in
+    # place instead of creating a second row for the same asset. Only
+    # decommissioned nodes are eligible (never hijack a still-active row
+    # off a serial coincidence/bug), and only when the agent actually
+    # reported a non-empty serial (some VMs/permission setups can't read one).
+    revived = False
+    if not existing and body.serial_number:
+        async with db.execute(
+            "SELECT id FROM nodes WHERE is_active=0 AND serial_number=? AND serial_number != '' LIMIT 1",
+            (body.serial_number,),
+        ) as cur:
+            existing = await cur.fetchone()
+        revived = existing is not None
 
     # Fresh override secret on every (re-)enroll, same reasoning as the
     # agent token below — an admin never needs to remember the code, only
@@ -91,17 +113,19 @@ async def enroll(body: EnrollRequest, db: DbDep) -> dict:
         await db.execute(
             """
             UPDATE nodes SET
-                hostname=?, os_type=?, os_version=?, arch=?, agent_version=?,
+                agent_uuid=?, hostname=?, os_type=?, os_version=?, arch=?, agent_version=?,
                 enrollment_token_id=?, status='pending', is_active=1,
                 override_secret=?, updated_at=datetime('now')
             WHERE id=?
             """,
-            (body.hostname, body.os_type, body.os_version, body.arch,
+            (body.agent_uuid, body.hostname, body.os_type, body.os_version, body.arch,
              body.agent_version, token_id, override_secret, node_id),
         )
         # Revoke any previously issued tokens for this node — re-enrollment
         # always mints a fresh one so a lost/leaked old token stops working.
         await db.execute("UPDATE agent_tokens SET revoked=1 WHERE node_id=?", (node_id,))
+        if revived:
+            log.info(f"Revived decommissioned node {node_id} by serial number match instead of creating a duplicate")
     else:
         async with db.execute(
             """

@@ -49,6 +49,7 @@ func Enroll(serverURL, enrollmentToken string) error {
 		OSVersion:       snap.OSVersion,
 		Arch:            archName(),
 		AgentVersion:    inventory.AgentVersion,
+		SerialNumber:    snap.SerialNumber,
 	})
 	if err != nil {
 		return fmt.Errorf("enrollment failed: %w", err)
