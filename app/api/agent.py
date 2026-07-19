@@ -281,10 +281,44 @@ async def checkin(body: CheckinRequest, node: CurrentNode, db: DbDep) -> dict:
             ids,
         )
 
+    # Hand back any admin->agent messages not yet delivered to the tray, and
+    # mark them delivered so the next check-in doesn't hand them out again.
+    async with db.execute(
+        "SELECT id, message, created_at FROM node_messages WHERE node_id=? AND sender='admin' AND delivered_at IS NULL",
+        (node_id,),
+    ) as cur:
+        pending_msgs = await cur.fetchall()
+    messages = [{"id": r[0], "message": r[1], "created_at": r[2]} for r in pending_msgs]
+    if messages:
+        ids = [m["id"] for m in messages]
+        placeholders = ",".join("?" for _ in ids)
+        await db.execute(
+            f"UPDATE node_messages SET delivered_at=datetime('now') WHERE id IN ({placeholders})",
+            ids,
+        )
+
     await db.commit()
 
     checkin_interval = await _get_setting_int(db, "agent_checkin_interval_sec", 60)
-    return {"checkin_interval_sec": checkin_interval, "commands": commands}
+    return {"checkin_interval_sec": checkin_interval, "commands": commands, "messages": messages}
+
+
+# ── Messages (agent -> admin replies) ────────────────────────────────────────
+
+class ReplyIn(BaseModel):
+    message: str
+
+
+@router.post("/messages/reply")
+async def reply_message(body: ReplyIn, node: CurrentNode, db: DbDep) -> dict:
+    if not body.message.strip():
+        raise HTTPException(status_code=400, detail="message is required")
+    await db.execute(
+        "INSERT INTO node_messages (node_id, sender, message) VALUES (?, 'agent', ?)",
+        (node["id"], body.message.strip()),
+    )
+    await db.commit()
+    return {"ok": True}
 
 
 # ── Command results ──────────────────────────────────────────────────────────

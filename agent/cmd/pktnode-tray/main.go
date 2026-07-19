@@ -57,10 +57,29 @@ func onReady() {
 				systray.Quit()
 				return
 			}
+			checkIncomingMessages()
 		case <-mOpen.ClickedCh:
 			openServer()
 		case <-mStop.ClickedCh:
 			go handleStopRequest()
+		}
+	}
+}
+
+// checkIncomingMessages shows any admin messages the root agent handed to
+// us on its last check-in, one dialog at a time, and drops a typed reply
+// back into the control dir for the agent to actually send.
+func checkIncomingMessages() {
+	msgs, ok := config.ReadAndClearIncomingMessages()
+	if !ok {
+		return
+	}
+	for _, m := range msgs {
+		reply, sent := promptForReply(m.Message)
+		if sent {
+			if err := config.WriteReplyRequest(reply); err != nil {
+				showMessage("pktNode", "Failed to send your reply: "+err.Error())
+			}
 		}
 	}
 }
