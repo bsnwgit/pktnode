@@ -33,6 +33,10 @@ type EnrollRequest struct {
 	OSVersion       string `json:"os_version"`
 	Arch            string `json:"arch"`
 	AgentVersion    string `json:"agent_version"`
+	// SerialNumber lets the server revive a decommissioned node record
+	// instead of creating a duplicate when this exact machine is wiped
+	// and re-enrolled with a brand-new AgentUUID.
+	SerialNumber string `json:"serial_number"`
 }
 
 type EnrollResponse struct {
