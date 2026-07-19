@@ -409,10 +409,9 @@ const SECURITY_TABS: Array<{ id: SecurityTabId; label: string; adminOnly?: boole
 ]
 
 // ── Data tab — its own left-hand vertical tab strip ───────────────────────────
-// Only one entry (no pluggable storage backend — SQLite only) but keeps the
-// vertical-tab-strip shell for visual consistency with the other pkt* apps.
-type DataTabId = 'backups'
+type DataTabId = 'storage' | 'backups'
 const DATA_TABS: Array<{ id: DataTabId; label: string }> = [
+  { id: 'storage', label: 'Storage' },
   { id: 'backups', label: 'Backups' },
 ]
 
@@ -513,7 +512,7 @@ export default function Settings() {
   const isAdmin               = me?.role === 'admin'
   const [tab, setTab]         = useState<TabId>('general')
   const [securityTab, setSecurityTab] = useState<SecurityTabId>(isAdmin ? 'users' : 'auth')
-  const [dataTab, setDataTab] = useState<DataTabId>('backups')
+  const [dataTab, setDataTab] = useState<DataTabId>('storage')
   const [settings, setSettings] = useState<Settings>({})
   const [loading, setLoading] = useState(true)
   const dirtyRef = useRef(false)
@@ -575,9 +574,9 @@ export default function Settings() {
   }
 
   const aiAssistantSave = useSave(['anthropic_api_key', 'ai_model'], settings, load)
+  const storageSave = useSave(['alert_event_retention_days'], settings, load)
   const backupSave = useSave([
     'backup_enabled', 'backup_interval_hours', 'backup_rotation_count', 'backup_path',
-    'alert_event_retention_days',
   ], settings, load)
   const authSave = useSave([
     'auth_local_enabled', 'session_timeout_minutes',
@@ -596,6 +595,8 @@ export default function Settings() {
   ], settings, load)
   const [cleanupRunning, setCleanupRunning] = useState(false)
   const [cleanupResult, setCleanupResult]   = useState<string | null>(null)
+  const [storageStats, setStorageStats]     = useState<{ db_size_bytes: number; row_counts: Record<string, number> } | null>(null)
+  const [storageStatsLoading, setStorageStatsLoading] = useState(false)
   const [exportRunning, setExportRunning]   = useState(false)
   const [exportError, setExportError]       = useState<string | null>(null)
   const [importFile, setImportFile]         = useState<File | null>(null)
@@ -617,9 +618,15 @@ export default function Settings() {
       if (r.metrics_history_deleted > 0)
         parts.push(`${r.metrics_history_deleted} metrics history rows purged`)
       setCleanupResult(parts.join(' · '))
+      await loadStorageStats()
     } catch (e: any) {
       setCleanupResult(`Error: ${e.message}`)
     } finally { setCleanupRunning(false) }
+  }
+
+  const loadStorageStats = async () => {
+    setStorageStatsLoading(true)
+    try { setStorageStats(await api.getStorageStats()) } catch { } finally { setStorageStatsLoading(false) }
   }
 
   const runBackupNow = async () => {
@@ -677,6 +684,10 @@ export default function Settings() {
 
   const { tick } = useAutoRefresh()
   useEffect(() => { if (tick > 0) silentLoad() }, [tick])
+
+  useEffect(() => {
+    if (tab === 'data' && dataTab === 'storage' && !storageStats) void loadStorageStats()
+  }, [tab, dataTab])
 
   if (loading) {
     return (
@@ -909,6 +920,60 @@ export default function Settings() {
           </div>
 
           <div className="flex-1 min-w-0">
+      {/* Storage */}
+      {dataTab === 'storage' && (
+        <Section title="Storage" onSave={storageSave.save} saving={storageSave.saving} saved={storageSave.saved} error={storageSave.error}
+          help={{
+            title: 'Storage — How It Works',
+            content: <>
+              <p>pktNode has a single storage backend (SQLite) — there's no backend picker here, unlike pktsnmp/pktflow. This tab covers what's actually configurable: how long fired alert events stick around, and a live view of what's in the database.</p>
+              <p><span className="text-gray-300 font-medium">Manual cleanup</span> applies the retention threshold immediately instead of waiting for the next scheduled pass, and also purges node metrics history older than 90 days (fixed, not user-configurable — it's just a growth cap).</p>
+            </>,
+          }}
+        >
+          <Field label="Alert event retention" hint="Days to keep fired alert events before they're purged">
+            <div className="flex items-center gap-3">
+              <NumberInput value={num('alert_event_retention_days', 90)} onChange={v => set('alert_event_retention_days', v)} min={1} max={3650} />
+              <span className="text-sm text-white">days</span>
+            </div>
+          </Field>
+          <Field label="Manual cleanup" hint="Immediately purge alert events older than the retention period above, and metrics history older than 90 days">
+            <div className="flex items-center gap-3 flex-wrap">
+              <button onClick={runCleanup} disabled={cleanupRunning}
+                className="bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-white text-sm rounded-lg px-4 py-2 transition-colors">
+                {cleanupRunning ? 'Running…' : 'Run Cleanup Now'}
+              </button>
+              {cleanupResult && (
+                <span className={`text-xs ${cleanupResult.startsWith('Error') ? 'text-red-400' : 'text-green-400'}`}>
+                  {cleanupResult}
+                </span>
+              )}
+            </div>
+          </Field>
+          <Field label="Database size" hint="Row counts per table and total file size on disk">
+            {storageStatsLoading && !storageStats ? (
+              <p className="text-sm text-white">Loading…</p>
+            ) : storageStats ? (
+              <div className="space-y-2">
+                <p className="text-sm text-white">
+                  <span className="text-white font-medium">{(storageStats.db_size_bytes / 1024 / 1024).toFixed(2)} MB</span> total
+                </p>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-1">
+                  {Object.entries(storageStats.row_counts).map(([table, count]) => (
+                    <p key={table} className="text-xs text-white">
+                      <span className="text-white">{table}</span>: <span className="font-mono">{count.toLocaleString()}</span>
+                    </p>
+                  ))}
+                </div>
+                <button onClick={loadStorageStats} className="text-xs text-white hover:text-white underline">Refresh</button>
+              </div>
+            ) : (
+              <p className="text-sm text-white">Unavailable</p>
+            )}
+          </Field>
+        </Section>
+      )}
+
       {/* Backup */}
       {dataTab === 'backups' && (
         <Section title="Backup" onSave={backupSave.save} saving={backupSave.saving} saved={backupSave.saved} error={backupSave.error}
@@ -918,7 +983,6 @@ export default function Settings() {
               <p>A backup always includes the SQLite database (nodes, agent tokens, users, settings, alert rules) and <code className="text-gray-400">config.yaml</code>.</p>
               <p><span className="text-gray-300 font-medium">Rotation count</span> caps how many snapshots (scheduled or manual) stay on disk — the oldest is deleted automatically once you exceed it.</p>
               <p><span className="text-gray-300 font-medium">Export bundle</span> is a one-off download, separate from the rotation-managed snapshots above. <span className="text-amber-500 font-medium">Restore always requires a service restart</span> afterward for config changes in the bundle to apply.</p>
-              <p><span className="text-gray-300 font-medium">Alert event retention</span> and <span className="text-gray-300 font-medium">manual cleanup</span> control how long fired alert events and node metrics history stick around, independent of the backup schedule above.</p>
             </>,
           }}
         >
@@ -936,25 +1000,6 @@ export default function Settings() {
           </Field>
           <Field label="Backup path" hint="Directory on server where snapshots are stored">
             <TextInput value={str('backup_path')} onChange={v => set('backup_path', v)} mono />
-          </Field>
-          <Field label="Alert event retention" hint="Days to keep fired alert events before they're purged">
-            <div className="flex items-center gap-3">
-              <NumberInput value={num('alert_event_retention_days', 90)} onChange={v => set('alert_event_retention_days', v)} min={1} max={3650} />
-              <span className="text-sm text-white">days</span>
-            </div>
-          </Field>
-          <Field label="Manual cleanup" hint="Immediately purge alert events and metrics history older than the retention period above">
-            <div className="flex items-center gap-3 flex-wrap">
-              <button onClick={runCleanup} disabled={cleanupRunning}
-                className="bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-white text-sm rounded-lg px-4 py-2 transition-colors">
-                {cleanupRunning ? 'Running…' : 'Run Cleanup Now'}
-              </button>
-              {cleanupResult && (
-                <span className={`text-xs ${cleanupResult.startsWith('Error') ? 'text-red-400' : 'text-green-400'}`}>
-                  {cleanupResult}
-                </span>
-              )}
-            </div>
           </Field>
           <Field label="Manual backup" hint="Trigger a backup run immediately using current settings">
             <div className="space-y-3">

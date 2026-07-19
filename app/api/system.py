@@ -96,6 +96,31 @@ async def run_cleanup() -> dict:
     return result
 
 
+_STORAGE_STATS_TABLES = [
+    "nodes", "node_software", "node_processes", "node_interfaces",
+    "node_metrics_history", "commands", "alert_events", "app_logs",
+]
+
+
+@router.get("/storage-stats", dependencies=[Depends(require_admin)])
+async def storage_stats() -> dict:
+    """DB file size + row counts per table — SQLite is the only backend
+    pktNode has, so this is the closest equivalent to a storage backend
+    picker's health view."""
+    cfg = get_settings()
+    db_path = Path(cfg.db_path)
+    size_bytes = db_path.stat().st_size if db_path.exists() else 0
+
+    counts: dict[str, int] = {}
+    async with aiosqlite.connect(cfg.db_path) as db:
+        for table in _STORAGE_STATS_TABLES:
+            async with db.execute(f"SELECT COUNT(*) FROM {table}") as cur:
+                row = await cur.fetchone()
+                counts[table] = row[0] if row else 0
+
+    return {"db_size_bytes": size_bytes, "row_counts": counts}
+
+
 @router.get("/export", dependencies=[Depends(require_admin)])
 async def export_bundle():
     """
