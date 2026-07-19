@@ -198,7 +198,7 @@ export default function Enrollment() {
               {tokens.filter(t => (tab === 'active' ? !t.revoked : t.revoked)).map(t => (
                 <tr key={t.id} className="hover:bg-gray-800/30 transition-colors">
                   <td className="px-5 py-3 text-white">{t.label || <span className="text-white">(no label)</span>}</td>
-                  <td className="px-5 py-3 text-white text-xs">{t.use_count}{t.max_uses ? ` / ${t.max_uses}` : ''}</td>
+                  <td className="px-5 py-3 text-white text-xs">{t.use_count} use{t.use_count === 1 ? '' : 's'}{t.max_uses ? ` / ${t.max_uses} max` : ''}</td>
                   <td className="px-5 py-3 text-white text-xs">{t.nodes_enrolled}</td>
                   <td className="px-5 py-3 text-white text-xs">{t.expires_at ? new Date(t.expires_at).toLocaleDateString() : 'Never'}</td>
                   {tab === 'revoked' && (
