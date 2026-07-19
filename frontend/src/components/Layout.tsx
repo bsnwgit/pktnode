@@ -176,7 +176,7 @@ export default function Layout({ children }: { children: ReactNode }) {
                   </span>
                 )}
               </NavLink>
-              {gapAfter && <div className="h-px bg-gray-800 mx-2 my-1.5" />}
+              {gapAfter && <div className="h-px bg-gray-700 mx-2 my-1.5" />}
             </Fragment>
           ))}
         </nav>
