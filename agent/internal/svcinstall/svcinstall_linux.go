@@ -34,8 +34,19 @@ TimeoutStopSec=infinity
 WantedBy=multi-user.target
 `
 
-// Install writes the systemd unit and enables + starts it. execPath must
-// be the final installed location of the binary.
+// Install writes the systemd unit and enables + (re)starts it. execPath
+// must be the final installed location of the binary.
+//
+// Uses `restart`, not `enable --now` — `--now` is equivalent to a plain
+// `start`, which is a no-op on a unit that's already active. That matters
+// a lot here: re-running the installer on top of an already-running agent
+// (re-enrolling, or picking up a newer binary) writes a fresh config.json
+// with new credentials, but the *already-running* process only reads that
+// file once at its own startup — without an actual restart it just keeps
+// running on its old, now-stale token, silently failing every check-in
+// forever even though the enrollment underneath it succeeded. `restart`
+// is correct either way: it starts a not-yet-running unit exactly like
+// `start` would, and force-restarts an already-running one.
 func Install(execPath string) error {
 	unit := fmt.Sprintf(unitTemplate, execPath)
 	if err := os.WriteFile(unitPath, []byte(unit), 0o644); err != nil {
@@ -44,8 +55,11 @@ func Install(execPath string) error {
 	if out, err := exec.Command("systemctl", "daemon-reload").CombinedOutput(); err != nil {
 		return fmt.Errorf("systemctl daemon-reload: %w: %s", err, out)
 	}
-	if out, err := exec.Command("systemctl", "enable", "--now", "pktnode-agent").CombinedOutput(); err != nil {
+	if out, err := exec.Command("systemctl", "enable", "pktnode-agent").CombinedOutput(); err != nil {
 		return fmt.Errorf("systemctl enable: %w: %s", err, out)
+	}
+	if out, err := exec.Command("systemctl", "restart", "pktnode-agent").CombinedOutput(); err != nil {
+		return fmt.Errorf("systemctl restart: %w: %s", err, out)
 	}
 	return nil
 }
