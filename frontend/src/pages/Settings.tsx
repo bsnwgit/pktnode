@@ -1853,6 +1853,7 @@ function EnrollmentTab() {
   const [showNew, setShowNew]     = useState(false)
   const [newToken, setNewToken]   = useState<string | null>(null)
   const [confirmRevoke, setConfirmRevoke] = useState<EnrollmentToken | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState<EnrollmentToken | null>(null)
 
   const load = async () => {
     setLoading(true)
@@ -1863,6 +1864,12 @@ function EnrollmentTab() {
   const revoke = async (t: EnrollmentToken) => {
     await api.revokeEnrollmentToken(t.id)
     setConfirmRevoke(null)
+    await load()
+  }
+
+  const del = async (t: EnrollmentToken) => {
+    await api.deleteEnrollmentToken(t.id)
+    setConfirmDelete(null)
     await load()
   }
 
@@ -1923,6 +1930,9 @@ function EnrollmentTab() {
                     {!t.revoked && (
                       <button onClick={() => setConfirmRevoke(t)} className="text-xs text-white hover:text-red-400 transition-colors">Revoke</button>
                     )}
+                    {t.revoked && (
+                      <button onClick={() => setConfirmDelete(t)} className="text-xs text-white hover:text-red-400 transition-colors">Delete</button>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -1951,6 +1961,21 @@ function EnrollmentTab() {
             <div className="flex justify-end gap-3">
               <button onClick={() => setConfirmRevoke(null)} className="px-4 py-2 text-sm text-white hover:text-white">Cancel</button>
               <button onClick={() => revoke(confirmRevoke)} className="px-4 py-2 text-sm bg-red-600 hover:bg-red-500 text-white rounded-lg">Revoke</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmDelete && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={() => setConfirmDelete(null)}>
+          <div className="bg-gray-900 border border-gray-700 rounded-xl p-6 max-w-sm w-full" onClick={e => e.stopPropagation()}>
+            <h3 className="text-lg font-semibold text-white mb-2">Delete token?</h3>
+            <p className="text-sm text-white mb-5">
+              Remove <span className="text-white font-medium">{confirmDelete.label || 'this token'}</span> from the list entirely. It's already revoked and unusable — this just clears the row. Nodes it enrolled are unaffected either way.
+            </p>
+            <div className="flex justify-end gap-3">
+              <button onClick={() => setConfirmDelete(null)} className="px-4 py-2 text-sm text-white hover:text-white">Cancel</button>
+              <button onClick={() => del(confirmDelete)} className="px-4 py-2 text-sm bg-red-600 hover:bg-red-500 text-white rounded-lg">Delete</button>
             </div>
           </div>
         </div>
