@@ -1,8 +1,63 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
+import clsx from 'clsx'
+import {
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+} from 'recharts'
 import { api, NodeDetail as NodeDetailType, CommandRecord } from '../api/client'
 import { useAuth } from '../store/auth'
 import HelpButton from '../components/HelpButton'
+
+const PAGE_SIZE = 15
+
+/**
+ * Page-number bar: shows every page when there are 5 or fewer, otherwise
+ * pages 1-5, an ellipsis, then the last page — plus prev/next buttons.
+ * Mirrors the Pagination component on the Alerts/Logs pages.
+ */
+function Pagination({ page, totalPages, onChange }: { page: number; totalPages: number; onChange: (p: number) => void }) {
+  if (totalPages <= 1) return null
+  const blockStart = Math.floor((page - 1) / 5) * 5 + 1
+  const blockEnd   = Math.min(blockStart + 4, totalPages)
+  const pages = Array.from({ length: blockEnd - blockStart + 1 }, (_, i) => blockStart + i)
+  const btn = (p: number) => clsx(
+    'text-xs min-w-[1.75rem] px-2 py-1 rounded-lg border transition-colors',
+    p === page
+      ? 'bg-blue-600/30 border-blue-500 text-blue-200'
+      : 'bg-gray-800 border-gray-700 text-gray-400 hover:text-white',
+  )
+  return (
+    <div className="flex items-center gap-1.5">
+      <button
+        onClick={() => onChange(Math.max(1, page - 1))}
+        disabled={page === 1}
+        className="text-xs px-2.5 py-1 rounded-lg border border-gray-700 bg-gray-800 text-gray-300 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+      >
+        ← Prev
+      </button>
+      {blockStart > 1 && (
+        <>
+          <button onClick={() => onChange(1)} className={btn(1)}>1</button>
+          <span className="px-1 text-gray-500 text-xs">..</span>
+        </>
+      )}
+      {pages.map(p => <button key={p} onClick={() => onChange(p)} className={btn(p)}>{p}</button>)}
+      {blockEnd < totalPages && (
+        <>
+          <span className="px-1 text-gray-500 text-xs">..</span>
+          <button onClick={() => onChange(totalPages)} className={btn(totalPages)}>{totalPages}</button>
+        </>
+      )}
+      <button
+        onClick={() => onChange(Math.min(totalPages, page + 1))}
+        disabled={page === totalPages}
+        className="text-xs px-2.5 py-1 rounded-lg border border-gray-700 bg-gray-800 text-gray-300 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+      >
+        Next →
+      </button>
+    </div>
+  )
+}
 
 const STATUS_STYLES: Record<string, string> = {
   online:        'bg-green-900/40 text-green-400 border border-green-700/40',
@@ -20,13 +75,71 @@ const COMMAND_STATUS_STYLES: Record<string, string> = {
   failed:    'bg-red-900/40 text-red-400 border border-red-700/40',
 }
 
+function toUtc(ts: string): string {
+  return ts.includes('T') || ts.endsWith('Z') ? ts : ts.replace(' ', 'T') + 'Z'
+}
+
 function fmtTime(ts: string | null): string {
   if (!ts) return '—'
-  const utc = ts.includes('T') || ts.endsWith('Z') ? ts : ts.replace(' ', 'T') + 'Z'
-  return new Date(utc).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })
+  return new Date(toUtc(ts)).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })
 }
 
 type Tab = 'overview' | 'software' | 'processes' | 'metrics' | 'commands'
+
+function MetricsChart({ history }: { history: NodeDetailType['metrics_history'] }) {
+  const data = [...history]
+    .filter(m => m.recorded_at)
+    .map(m => ({
+      ts: new Date(toUtc(m.recorded_at!)).getTime(),
+      cpu_pct: m.cpu_pct,
+      mem_pct: m.mem_pct,
+      disk_pct: m.disk_pct,
+    }))
+    .sort((a, b) => a.ts - b.ts)
+
+  if (data.length === 0) {
+    return (
+      <div className="h-52 flex items-center justify-center text-sm text-white border border-dashed border-gray-800 rounded-lg">
+        No metrics history yet
+      </div>
+    )
+  }
+
+  return (
+    <ResponsiveContainer width="100%" height={220}>
+      <LineChart data={data} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" vertical={false} />
+        <XAxis
+          dataKey="ts"
+          type="number"
+          scale="time"
+          domain={['dataMin', 'dataMax']}
+          tickFormatter={v => new Date(v).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+          tick={{ fontSize: 10, fill: '#d1d5db' }}
+          axisLine={false}
+          tickLine={false}
+        />
+        <YAxis
+          domain={[0, 100]}
+          tickFormatter={v => `${v}%`}
+          tick={{ fontSize: 10, fill: '#d1d5db' }}
+          axisLine={false}
+          tickLine={false}
+          width={40}
+        />
+        <Tooltip
+          contentStyle={{ background: '#111827', border: '1px solid #374151', borderRadius: 8, fontSize: 11 }}
+          labelFormatter={v => new Date(v as number).toLocaleString()}
+          formatter={(val: number, name: string) => [`${val?.toFixed(1) ?? '—'}%`, name]}
+        />
+        <Legend iconSize={8} wrapperStyle={{ fontSize: 11, color: '#9ca3af' }} />
+        <Line type="monotone" dataKey="cpu_pct" name="CPU" stroke="#38bdf8" dot={false} strokeWidth={2} connectNulls={false} />
+        <Line type="monotone" dataKey="mem_pct" name="Memory" stroke="#a78bfa" dot={false} strokeWidth={2} connectNulls={false} />
+        <Line type="monotone" dataKey="disk_pct" name="Disk" stroke="#fb923c" dot={false} strokeWidth={2} connectNulls={false} />
+      </LineChart>
+    </ResponsiveContainer>
+  )
+}
 
 function RunCommandModal({ onClose, onQueued }: { onClose: () => void; onQueued: (type: string, payload: Record<string, unknown>) => void }) {
   const [type, setType] = useState('restart_service')
@@ -156,7 +269,10 @@ export default function NodeDetail() {
   const canAct = user?.role === 'admin' || user?.role === 'analyst'
   const [node, setNode] = useState<NodeDetailType | null>(null)
   const [commands, setCommands] = useState<CommandRecord[]>([])
-  const [tab, setTab] = useState<Tab>('overview')
+  const [tab, setTabState] = useState<Tab>('overview')
+  const [search, setSearch] = useState('')
+  const [page, setPage] = useState(1)
+  const setTab = (t: Tab) => { setTabState(t); setSearch(''); setPage(1) }
   const [loading, setLoading] = useState(true)
   const [showRunCommand, setShowRunCommand] = useState(false)
   const [showOverrideCode, setShowOverrideCode] = useState(false)
@@ -217,6 +333,29 @@ export default function NodeDetail() {
   if (loading || !node) {
     return <div className="flex items-center justify-center h-48 text-white"><p className="text-sm">Loading…</p></div>
   }
+
+  const q = search.trim().toLowerCase()
+  const matches = (...fields: (string | number | null | undefined)[]) =>
+    q === '' || fields.some(f => f !== null && f !== undefined && String(f).toLowerCase().includes(q))
+
+  const filteredSoftware = node.software.filter(s => matches(s.name, s.version, s.publisher, s.install_date))
+  const filteredProcesses = node.processes.filter(p => matches(p.pid, p.name, p.username))
+  const filteredMetrics = node.metrics_history.filter(m => matches(fmtTime(m.recorded_at)))
+  const filteredCommands = commands.filter(c => matches(c.command_type, c.status, c.created_by, c.result?.output))
+
+  const listForTab: Record<string, unknown[]> = {
+    software: filteredSoftware,
+    processes: filteredProcesses,
+    metrics: filteredMetrics,
+    commands: filteredCommands,
+  }
+  const activeList = listForTab[tab]
+  const totalPages = activeList ? Math.max(1, Math.ceil(activeList.length / PAGE_SIZE)) : 1
+  const pageStart = (page - 1) * PAGE_SIZE
+  const pagedSoftware = filteredSoftware.slice(pageStart, pageStart + PAGE_SIZE)
+  const pagedProcesses = filteredProcesses.slice(pageStart, pageStart + PAGE_SIZE)
+  const pagedMetrics = filteredMetrics.slice(pageStart, pageStart + PAGE_SIZE)
+  const pagedCommands = filteredCommands.slice(pageStart, pageStart + PAGE_SIZE)
 
   return (
     <div className="space-y-4">
@@ -295,18 +434,29 @@ export default function NodeDetail() {
         </div>
       </div>
 
-      <div className="flex items-center gap-1 bg-gray-900 border border-gray-800 rounded-xl p-1 w-fit">
-        {(['overview', 'software', 'processes', 'metrics', 'commands'] as Tab[]).map(t => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={`text-sm px-4 py-1.5 rounded-lg capitalize transition-colors ${
-              tab === t ? 'bg-blue-600/20 text-blue-300 font-medium' : 'text-white hover:text-white'
-            }`}
-          >
-            {t}
-          </button>
-        ))}
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div className="flex items-center gap-1 bg-gray-900 border border-gray-800 rounded-xl p-1 w-fit">
+          {(['overview', 'software', 'processes', 'metrics', 'commands'] as Tab[]).map(t => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              className={`text-sm px-4 py-1.5 rounded-lg capitalize transition-colors ${
+                tab === t ? 'bg-blue-600/20 text-blue-300 font-medium' : 'text-white hover:text-white'
+              }`}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+        {tab !== 'overview' && (
+          <input
+            type="text"
+            placeholder={`Search ${tab}…`}
+            value={search}
+            onChange={e => { setSearch(e.target.value); setPage(1) }}
+            className="text-xs bg-gray-800 border border-gray-700 text-white placeholder-gray-500 rounded-lg px-3 py-1.5 w-56 focus:outline-none focus:border-blue-500"
+          />
+        )}
       </div>
 
       {tab === 'overview' && (
@@ -351,7 +501,7 @@ export default function NodeDetail() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-800/50">
-              {node.software.map((s, i) => (
+              {pagedSoftware.map((s, i) => (
                 <tr key={i} className="hover:bg-gray-800/30 transition-colors">
                   <td className="px-5 py-2.5 text-white">{s.name}</td>
                   <td className="px-5 py-2.5 text-white text-xs font-mono">{s.version || '—'}</td>
@@ -359,11 +509,16 @@ export default function NodeDetail() {
                   <td className="px-5 py-2.5 text-white text-xs">{s.install_date || '—'}</td>
                 </tr>
               ))}
-              {node.software.length === 0 && (
-                <tr><td colSpan={4} className="px-5 py-8 text-center text-sm text-white">No software inventory yet</td></tr>
+              {filteredSoftware.length === 0 && (
+                <tr><td colSpan={4} className="px-5 py-8 text-center text-sm text-white">{node.software.length === 0 ? 'No software inventory yet' : 'No software matches your search'}</td></tr>
               )}
             </tbody>
           </table>
+          {filteredSoftware.length > 0 && (
+            <div className="flex justify-end px-5 py-3 border-t border-gray-800">
+              <Pagination page={page} totalPages={totalPages} onChange={setPage} />
+            </div>
+          )}
         </div>
       )}
 
@@ -380,7 +535,7 @@ export default function NodeDetail() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-800/50">
-              {node.processes.map(p => (
+              {pagedProcesses.map(p => (
                 <tr key={p.pid} className="hover:bg-gray-800/30 transition-colors">
                   <td className="px-5 py-2.5 text-white text-xs font-mono">{p.pid}</td>
                   <td className="px-5 py-2.5 text-white">{p.name}</td>
@@ -389,39 +544,55 @@ export default function NodeDetail() {
                   <td className="px-5 py-2.5 text-white text-xs">{p.username || '—'}</td>
                 </tr>
               ))}
-              {node.processes.length === 0 && (
-                <tr><td colSpan={5} className="px-5 py-8 text-center text-sm text-white">No process snapshot yet</td></tr>
+              {filteredProcesses.length === 0 && (
+                <tr><td colSpan={5} className="px-5 py-8 text-center text-sm text-white">{node.processes.length === 0 ? 'No process snapshot yet' : 'No processes match your search'}</td></tr>
               )}
             </tbody>
           </table>
+          {filteredProcesses.length > 0 && (
+            <div className="flex justify-end px-5 py-3 border-t border-gray-800">
+              <Pagination page={page} totalPages={totalPages} onChange={setPage} />
+            </div>
+          )}
         </div>
       )}
 
       {tab === 'metrics' && (
-        <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-gray-800">
-                <th className="px-5 py-3 text-left text-xs font-medium text-white">Time</th>
-                <th className="px-5 py-3 text-left text-xs font-medium text-white">CPU %</th>
-                <th className="px-5 py-3 text-left text-xs font-medium text-white">Memory %</th>
-                <th className="px-5 py-3 text-left text-xs font-medium text-white">Disk %</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-800/50">
-              {node.metrics_history.slice(0, 100).map((m, i) => (
-                <tr key={i} className="hover:bg-gray-800/30 transition-colors">
-                  <td className="px-5 py-2 text-white text-xs">{fmtTime(m.recorded_at)}</td>
-                  <td className="px-5 py-2 text-white text-xs">{m.cpu_pct?.toFixed(1) ?? '—'}</td>
-                  <td className="px-5 py-2 text-white text-xs">{m.mem_pct?.toFixed(1) ?? '—'}</td>
-                  <td className="px-5 py-2 text-white text-xs">{m.disk_pct?.toFixed(1) ?? '—'}</td>
+        <div className="space-y-4">
+          <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+            <p className="text-xs text-white mb-2">History</p>
+            <MetricsChart history={node.metrics_history} />
+          </div>
+          <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-800">
+                  <th className="px-5 py-3 text-left text-xs font-medium text-white">Time</th>
+                  <th className="px-5 py-3 text-left text-xs font-medium text-white">CPU %</th>
+                  <th className="px-5 py-3 text-left text-xs font-medium text-white">Memory %</th>
+                  <th className="px-5 py-3 text-left text-xs font-medium text-white">Disk %</th>
                 </tr>
-              ))}
-              {node.metrics_history.length === 0 && (
-                <tr><td colSpan={4} className="px-5 py-8 text-center text-sm text-white">No metrics history yet</td></tr>
-              )}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-gray-800/50">
+                {pagedMetrics.map((m, i) => (
+                  <tr key={i} className="hover:bg-gray-800/30 transition-colors">
+                    <td className="px-5 py-2 text-white text-xs">{fmtTime(m.recorded_at)}</td>
+                    <td className="px-5 py-2 text-white text-xs">{m.cpu_pct?.toFixed(1) ?? '—'}</td>
+                    <td className="px-5 py-2 text-white text-xs">{m.mem_pct?.toFixed(1) ?? '—'}</td>
+                    <td className="px-5 py-2 text-white text-xs">{m.disk_pct?.toFixed(1) ?? '—'}</td>
+                  </tr>
+                ))}
+                {filteredMetrics.length === 0 && (
+                  <tr><td colSpan={4} className="px-5 py-8 text-center text-sm text-white">{node.metrics_history.length === 0 ? 'No metrics history yet' : 'No metrics match your search'}</td></tr>
+                )}
+              </tbody>
+            </table>
+            {filteredMetrics.length > 0 && (
+              <div className="flex justify-end px-5 py-3 border-t border-gray-800">
+                <Pagination page={page} totalPages={totalPages} onChange={setPage} />
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -438,7 +609,7 @@ export default function NodeDetail() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-800/50">
-              {commands.map(c => (
+              {pagedCommands.map(c => (
                 <tr key={c.id} className="hover:bg-gray-800/30 transition-colors">
                   <td className="px-5 py-2.5 text-white">{c.command_type}</td>
                   <td className="px-5 py-2.5"><span className={`text-xs px-2 py-0.5 rounded-full ${COMMAND_STATUS_STYLES[c.status]}`}>{c.status}</span></td>
@@ -447,11 +618,16 @@ export default function NodeDetail() {
                   <td className="px-5 py-2.5 text-white text-xs font-mono max-w-xs truncate">{c.result?.output || '—'}</td>
                 </tr>
               ))}
-              {commands.length === 0 && (
-                <tr><td colSpan={5} className="px-5 py-8 text-center text-sm text-white">No remote actions queued yet</td></tr>
+              {filteredCommands.length === 0 && (
+                <tr><td colSpan={5} className="px-5 py-8 text-center text-sm text-white">{commands.length === 0 ? 'No remote actions queued yet' : 'No commands match your search'}</td></tr>
               )}
             </tbody>
           </table>
+          {filteredCommands.length > 0 && (
+            <div className="flex justify-end px-5 py-3 border-t border-gray-800">
+              <Pagination page={page} totalPages={totalPages} onChange={setPage} />
+            </div>
+          )}
         </div>
       )}
 
