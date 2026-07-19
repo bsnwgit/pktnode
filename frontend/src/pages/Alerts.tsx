@@ -421,8 +421,8 @@ export default function Alerts() {
   const [eventsPage, setEventsPage] = useState(1)
   const [historyPage, setHistoryPage] = useState(1)
 
-  const loadEvents = async () => {
-    setLoading(true)
+  const loadEvents = async (silent = false) => {
+    if (!silent) setLoading(true)
     try {
       const [active, all] = await Promise.all([
         api.getAlertEvents({ active: true, limit: 1000 }) as unknown as Promise<AlertEvent[]>,
@@ -431,9 +431,9 @@ export default function Alerts() {
       setEvents(active)
       setHistory(all)
     } catch (e: any) {
-      setError(e.message || 'Failed to load alerts')
+      if (!silent) setError(e.message || 'Failed to load alerts')
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }
 
@@ -445,7 +445,15 @@ export default function Alerts() {
     }
   }
 
-  useEffect(() => { loadEvents(); loadRules() }, [])
+  useEffect(() => {
+    loadEvents()
+    loadRules()
+    // Active alerts (e.g. node_offline) auto-resolve server-side as soon as
+    // the underlying condition clears — poll quietly so that shows up here
+    // without the user having to manually refresh the page.
+    const id = setInterval(() => loadEvents(true), 30_000)
+    return () => clearInterval(id)
+  }, [])
 
   const ack = async (id: number) => {
     await api.ackAlertEvent(id)
