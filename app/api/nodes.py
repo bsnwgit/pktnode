@@ -67,7 +67,7 @@ async def list_nodes(
                n.arch, n.agent_version, n.ip_address, n.manufacturer, n.model,
                n.cpu_model, n.cpu_cores, n.memory_total_mb, n.disk_total_gb, n.disk_free_gb,
                n.uptime_seconds, n.current_user, n.tags_json, n.is_active,
-               n.first_seen_at, n.last_checkin_at,
+               n.first_seen_at, n.last_checkin_at, n.updated_at,
                {_STATUS_EXPR}
         FROM nodes n
         {where}
@@ -87,6 +87,11 @@ async def list_nodes(
 
     if status:
         result = [d for d in result if d["status"] == status]
+    else:
+        # Decommissioned nodes have their own dedicated page — keep them
+        # out of the default/unfiltered list so they don't clutter the
+        # live-asset view. Pass ?status=decommissioned explicitly to see them.
+        result = [d for d in result if d["status"] != "decommissioned"]
     return result
 
 

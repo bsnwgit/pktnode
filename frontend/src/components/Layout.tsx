@@ -71,11 +71,12 @@ function ChangePasswordModal({ onClose }: { onClose: () => void }) {
 }
 
 const NAV = [
-  { to: '/',            label: 'Dashboard', icon: '◑', adminOnly: false },
-  { to: '/nodes',       label: 'Nodes',     icon: '⬡', adminOnly: false },
-  { to: '/alerts',      label: 'Alerts',    icon: '△', adminOnly: false },
-  { to: '/logs',        label: 'Logs',      icon: '▤', adminOnly: false },
-  { to: '/settings',    label: 'Settings',  icon: '⚙', adminOnly: true },
+  { to: '/',              label: 'Dashboard',      icon: '◑', adminOnly: false },
+  { to: '/nodes',         label: 'Nodes',          icon: '⬡', adminOnly: false },
+  { to: '/decommissioned',label: 'Decommissioned', icon: '⊘', adminOnly: false },
+  { to: '/alerts',        label: 'Alerts',         icon: '△', adminOnly: false },
+  { to: '/logs',          label: 'Logs',           icon: '▤', adminOnly: false },
+  { to: '/settings',      label: 'Settings',       icon: '⚙', adminOnly: true },
 ]
 
 const INTERVALS = [

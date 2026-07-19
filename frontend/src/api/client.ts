@@ -360,6 +360,7 @@ export interface NodeSummary {
   is_active: boolean
   first_seen_at: string
   last_checkin_at: string | null
+  updated_at: string
   status: NodeStatus
 }
 
