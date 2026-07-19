@@ -191,10 +191,10 @@ export default function NodeDetail() {
       '- Revokes its agent token and override (unlock) code — a leftover local install can no longer check in or unlock/uninstall itself with old credentials\n' +
       '- Clears its current software/process/network snapshots\n' +
       '- Keeps metrics, command, and alert history for the record\n\n' +
-      'It moves to the Decommissioned page — you can still view its full history there, and permanently delete it later if you want it gone entirely.'
+      'It moves to the Decommissioned tab on the Nodes page — you can still view its full history there, and permanently delete it later if you want it gone entirely.'
     )) return
     await api.decommissionNode(Number(id))
-    navigate('/decommissioned')
+    navigate('/nodes?status=decommissioned')
   }
 
   const deletePermanently = async () => {
@@ -204,7 +204,7 @@ export default function NodeDetail() {
       'This cannot be undone.'
     )) return
     await api.deleteNode(Number(id))
-    navigate('/decommissioned')
+    navigate('/nodes?status=decommissioned')
   }
 
   const queueCommand = async (type: string, payload: Record<string, unknown>) => {

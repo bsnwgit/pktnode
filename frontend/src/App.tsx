@@ -8,9 +8,8 @@ const Dashboard  = lazy(() => import('./pages/Dashboard'))
 const Alerts     = lazy(() => import('./pages/Alerts'))
 const Logs       = lazy(() => import('./pages/Logs'))
 const Settings   = lazy(() => import('./pages/Settings'))
-const Nodes          = lazy(() => import('./pages/Nodes'))
-const NodeDetail     = lazy(() => import('./pages/NodeDetail'))
-const Decommissioned = lazy(() => import('./pages/Decommissioned'))
+const Nodes      = lazy(() => import('./pages/Nodes'))
+const NodeDetail = lazy(() => import('./pages/NodeDetail'))
 
 function PageFallback() {
   return <div className="flex items-center justify-center h-48 text-white">Loading…</div>
@@ -53,11 +52,6 @@ export default function App() {
               <Suspense fallback={<PageFallback />}><NodeDetail /></Suspense>
             </ProtectedRoute>
           } />
-          <Route path="/decommissioned" element={
-            <ProtectedRoute>
-              <Suspense fallback={<PageFallback />}><Decommissioned /></Suspense>
-            </ProtectedRoute>
-          } />
           <Route path="/alerts" element={
             <ProtectedRoute>
               <Suspense fallback={<PageFallback />}><Alerts /></Suspense>
@@ -74,6 +68,7 @@ export default function App() {
             </AdminRoute>
           } />
           <Route path="/users" element={<Navigate to="/settings" replace />} />
+          <Route path="/decommissioned" element={<Navigate to="/nodes?status=decommissioned" replace />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </AuthProvider>
