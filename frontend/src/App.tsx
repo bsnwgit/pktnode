@@ -10,6 +10,7 @@ const Logs       = lazy(() => import('./pages/Logs'))
 const Settings   = lazy(() => import('./pages/Settings'))
 const Nodes      = lazy(() => import('./pages/Nodes'))
 const NodeDetail = lazy(() => import('./pages/NodeDetail'))
+const Enrollment = lazy(() => import('./pages/Enrollment'))
 
 function PageFallback() {
   return <div className="flex items-center justify-center h-48 text-white">Loading…</div>
@@ -51,6 +52,11 @@ export default function App() {
             <ProtectedRoute>
               <Suspense fallback={<PageFallback />}><NodeDetail /></Suspense>
             </ProtectedRoute>
+          } />
+          <Route path="/enrollment" element={
+            <AdminRoute>
+              <Suspense fallback={<PageFallback />}><Enrollment /></Suspense>
+            </AdminRoute>
           } />
           <Route path="/alerts" element={
             <ProtectedRoute>
