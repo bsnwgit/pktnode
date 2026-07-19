@@ -491,6 +491,11 @@ export default function NodeDetail() {
 
       {tab === 'software' && (
         <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+          {filteredSoftware.length > 0 && (
+            <div className="flex justify-center px-5 py-3 border-b border-gray-800">
+              <Pagination page={page} totalPages={totalPages} onChange={setPage} />
+            </div>
+          )}
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-800">
@@ -514,16 +519,16 @@ export default function NodeDetail() {
               )}
             </tbody>
           </table>
-          {filteredSoftware.length > 0 && (
-            <div className="flex justify-end px-5 py-3 border-t border-gray-800">
-              <Pagination page={page} totalPages={totalPages} onChange={setPage} />
-            </div>
-          )}
         </div>
       )}
 
       {tab === 'processes' && (
         <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+          {filteredProcesses.length > 0 && (
+            <div className="flex justify-center px-5 py-3 border-b border-gray-800">
+              <Pagination page={page} totalPages={totalPages} onChange={setPage} />
+            </div>
+          )}
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-800">
@@ -549,11 +554,6 @@ export default function NodeDetail() {
               )}
             </tbody>
           </table>
-          {filteredProcesses.length > 0 && (
-            <div className="flex justify-end px-5 py-3 border-t border-gray-800">
-              <Pagination page={page} totalPages={totalPages} onChange={setPage} />
-            </div>
-          )}
         </div>
       )}
 
@@ -564,6 +564,11 @@ export default function NodeDetail() {
             <MetricsChart history={node.metrics_history} />
           </div>
           <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+            {filteredMetrics.length > 0 && (
+              <div className="flex justify-center px-5 py-3 border-b border-gray-800">
+                <Pagination page={page} totalPages={totalPages} onChange={setPage} />
+              </div>
+            )}
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-gray-800">
@@ -587,17 +592,17 @@ export default function NodeDetail() {
                 )}
               </tbody>
             </table>
-            {filteredMetrics.length > 0 && (
-              <div className="flex justify-end px-5 py-3 border-t border-gray-800">
-                <Pagination page={page} totalPages={totalPages} onChange={setPage} />
-              </div>
-            )}
           </div>
         </div>
       )}
 
       {tab === 'commands' && (
         <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+          {filteredCommands.length > 0 && (
+            <div className="flex justify-center px-5 py-3 border-b border-gray-800">
+              <Pagination page={page} totalPages={totalPages} onChange={setPage} />
+            </div>
+          )}
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-800">
@@ -623,11 +628,6 @@ export default function NodeDetail() {
               )}
             </tbody>
           </table>
-          {filteredCommands.length > 0 && (
-            <div className="flex justify-end px-5 py-3 border-t border-gray-800">
-              <Pagination page={page} totalPages={totalPages} onChange={setPage} />
-            </div>
-          )}
         </div>
       )}
 
