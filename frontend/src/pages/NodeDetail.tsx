@@ -186,7 +186,13 @@ export default function NodeDetail() {
   }
 
   const decommission = async () => {
-    if (!id || !confirm('Decommission this node? It stops appearing as a live asset but its history is kept.')) return
+    if (!id || !confirm(
+      'Decommission & revoke this node?\n\n' +
+      '- Revokes its agent token and override (unlock) code — a leftover local install can no longer check in or unlock/uninstall itself with old credentials\n' +
+      '- Clears its current software/process/network snapshots\n' +
+      '- Keeps metrics, command, and alert history for the record\n\n' +
+      'Use Delete instead if you want the node removed entirely.'
+    )) return
     await api.decommissionNode(Number(id))
     await load()
   }
@@ -244,7 +250,7 @@ export default function NodeDetail() {
             {user?.role === 'admin' && node.is_active && (
               <button onClick={decommission}
                 className="px-4 py-2 text-sm bg-gray-800 hover:bg-gray-700 border border-gray-700 text-white rounded-lg transition-colors">
-                Decommission
+                Decommission &amp; Revoke
               </button>
             )}
           </div>
