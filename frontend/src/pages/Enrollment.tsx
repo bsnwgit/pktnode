@@ -170,11 +170,14 @@ export default function Enrollment() {
           <button
             key={t}
             onClick={() => setTab(t)}
-            className={`text-sm px-4 py-1.5 rounded-lg capitalize transition-colors ${
+            className={`flex items-center gap-1.5 text-sm px-4 py-1.5 rounded-lg capitalize transition-colors ${
               tab === t ? 'bg-blue-600/20 text-blue-300 font-medium' : 'text-white hover:text-white'
             }`}
           >
-            {t} {t === 'active' ? `(${tokens.filter(x => !x.revoked).length})` : `(${tokens.filter(x => x.revoked).length})`}
+            <span>{t}</span>
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-800 text-gray-400">
+              {t === 'active' ? tokens.filter(x => !x.revoked).length : tokens.filter(x => x.revoked).length}
+            </span>
           </button>
         ))}
       </div>
