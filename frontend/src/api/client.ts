@@ -238,6 +238,10 @@ export const api = {
   getOverrideCode: (id: number) =>
     request<{ code: string; expires_in_sec: number }>(`/nodes/${id}/override-code`),
 
+  getNodeMessages: (id: number) => request<NodeMessage[]>(`/nodes/${id}/messages`),
+  sendNodeMessage: (id: number, message: string) =>
+    request<{ id: number }>(`/nodes/${id}/messages`, { method: 'POST', body: JSON.stringify({ message }) }),
+
   // ── Enrollment ────────────────────────────────────────────────────────────
   getEnrollmentTokens: () => request<EnrollmentToken[]>('/enrollment/tokens'),
   createEnrollmentToken: (body: { label?: string; expires_in_days?: number; max_uses?: number }) =>
@@ -417,6 +421,15 @@ export interface CommandRecord {
   completed_at: string | null
   exit_code: number | null
   result: { output: string } | null
+  created_by: string | null
+}
+
+export interface NodeMessage {
+  id: number
+  sender: 'admin' | 'agent'
+  message: string
+  created_at: string
+  delivered_at: string | null
   created_by: string | null
 }
 

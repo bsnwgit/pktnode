@@ -85,6 +85,8 @@ func Run(stopCh <-chan struct{}) error {
 	go pollStopRequests(cfg)
 
 	client := apiclient.New(cfg.ServerURL, cfg.AgentToken)
+	go pollReplyRequests(client)
+
 	interval := time.Duration(cfg.CheckinIntervalSec) * time.Second
 	if interval <= 0 {
 		interval = 60 * time.Second
@@ -139,6 +141,24 @@ func pollStopRequests(cfg *config.Config) {
 	}
 }
 
+// pollReplyRequests watches for a reply the tray dropped into the control
+// dir after showing the user an incoming message, and relays it to the
+// server. The tray itself has no network access or credentials — this is
+// the one process that does, same split as pollStopRequests.
+func pollReplyRequests(client *apiclient.Client) {
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	for range ticker.C {
+		req, ok := config.ReadAndClearReplyRequest()
+		if !ok {
+			continue
+		}
+		if err := client.ReplyMessage(req.Message); err != nil {
+			log.Printf("failed to send reply message: %v", err)
+		}
+	}
+}
+
 func markStopped(cfg *config.Config) {
 	status, err := config.LoadStatus()
 	if err != nil {
@@ -180,6 +200,16 @@ func checkinOnce(client *apiclient.Client, cfg *config.Config, fullInventory boo
 			Status: result.Status, ExitCode: result.ExitCode, Result: result.Output,
 		}); err != nil {
 			log.Printf("failed to report result for command #%d: %v", cmd.ID, err)
+		}
+	}
+
+	if len(resp.Messages) > 0 {
+		msgs := make([]config.IncomingMessage, len(resp.Messages))
+		for i, m := range resp.Messages {
+			msgs[i] = config.IncomingMessage{ID: m.ID, Message: m.Message, CreatedAt: m.CreatedAt}
+		}
+		if err := config.WriteIncomingMessages(msgs); err != nil {
+			log.Printf("failed to hand messages to tray: %v", err)
 		}
 	}
 }
