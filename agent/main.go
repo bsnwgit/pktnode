@@ -23,6 +23,7 @@ import (
 	"pktnode-agent/internal/inventory"
 	"pktnode-agent/internal/svcinstall"
 	"pktnode-agent/internal/svcrun"
+	"pktnode-agent/internal/totp"
 )
 
 func main() {
@@ -35,7 +36,9 @@ func main() {
 	case "install":
 		runInstall(os.Args[2:])
 	case "uninstall":
-		runUninstall()
+		runUninstall(os.Args[2:])
+	case "unlock":
+		runUnlock(os.Args[2:])
 	case "run":
 		runForeground()
 	case "version":
@@ -54,9 +57,16 @@ func usage() {
 
 Usage:
   pktnode-agent install --server <url> --token <enrollment-token>
-  pktnode-agent uninstall
+  pktnode-agent uninstall --unlock-code <code>
+  pktnode-agent unlock <code>
   pktnode-agent run
   pktnode-agent version
+
+"unlock" and "uninstall --unlock-code" both take the live override code
+shown to an admin on this node's detail page in the pktNode UI. "unlock"
+grants a short (2 minute) window to stop the service via the OS service
+manager (systemctl/launchctl/Stop-Service) without a code check built
+into that path itself.
 `)
 }
 
@@ -124,7 +134,49 @@ func installTrayIfPresent() {
 	fmt.Println("Installed status icon to", trayInstallPath, "(shows up next time you log in)")
 }
 
-func runUninstall() {
+func runUnlock(args []string) {
+	if len(args) != 1 {
+		fmt.Fprintln(os.Stderr, "Usage: pktnode-agent unlock <code>")
+		os.Exit(2)
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("%v", err)
+	}
+	if cfg.OverrideSecret == "" {
+		log.Fatal("this node has no override secret (enrolled before tamper-lockout support was added — re-enroll to get one)")
+	}
+	if !totp.Verify(cfg.OverrideSecret, args[0]) {
+		log.Fatal("incorrect or expired override code")
+	}
+	if err := config.WriteUnlockGrant(); err != nil {
+		log.Fatalf("failed to record unlock: %v", err)
+	}
+	fmt.Printf("Unlocked for %s — stop/restart the service now via the normal OS service manager.\n", config.UnlockGrantMaxAge)
+}
+
+func runUninstall(args []string) {
+	fs := flag.NewFlagSet("uninstall", flag.ExitOnError)
+	code := fs.String("unlock-code", "", "Override code from this node's detail page in the pktNode UI")
+	fs.Parse(args)
+
+	cfg, err := config.Load()
+	switch {
+	case err == config.ErrNotEnrolled:
+		// Nothing enrolled to protect — proceed (e.g. cleaning up a
+		// partial/broken install).
+	case err != nil:
+		log.Fatalf("%v", err)
+	case cfg.OverrideSecret == "":
+		// Enrolled before tamper-lockout existed — nothing to check
+		// against, don't block a legitimate uninstall on a gap that
+		// isn't the user's fault.
+	default:
+		if *code == "" || !totp.Verify(cfg.OverrideSecret, *code) {
+			log.Fatal("uninstall requires --unlock-code with the current override code from this node's detail page in the pktNode UI")
+		}
+	}
+
 	_ = svcinstall.UninstallTray() // best-effort, don't block on it
 	if err := svcinstall.Uninstall(); err != nil {
 		log.Fatalf("failed to uninstall service: %v", err)

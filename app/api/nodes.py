@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from app.database import get_db
 from app.dependencies import AdminUser, AnalystUser, CurrentUser, DbDep
+from app import totp
 
 router = APIRouter()
 
@@ -187,6 +188,25 @@ async def decommission_node(node_id: int, _: AdminUser, db: DbDep) -> dict:
     await db.execute("UPDATE agent_tokens SET revoked=1 WHERE node_id=?", (node_id,))
     await db.commit()
     return {"ok": True}
+
+
+@router.get("/{node_id}/override-code")
+async def get_override_code(node_id: int, _: AdminUser, db: DbDep) -> dict:
+    """
+    The live tamper-lockout override code for this node — admin-only.
+    The agent verifies this fully offline (derives the same code from a
+    secret it was given once at enrollment plus its own clock), so there
+    is no "issue a code" API call here, just a read of what's currently
+    valid. Give this code to whoever needs to stop/uninstall the agent
+    locally on the machine.
+    """
+    async with db.execute("SELECT override_secret FROM nodes WHERE id=?", (node_id,)) as cur:
+        row = await cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Node not found")
+    if not row[0]:
+        raise HTTPException(status_code=409, detail="This node has no override secret (enrolled before tamper-lockout support was added — re-enroll to get one)")
+    return {"code": totp.current_code(row[0]), "expires_in_sec": totp.seconds_remaining()}
 
 
 @router.delete("/{node_id}", status_code=204)

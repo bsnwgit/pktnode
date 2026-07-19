@@ -24,6 +24,11 @@ ExecStart=%s run
 Restart=always
 RestartSec=5
 User=root
+# The agent itself ignores an unauthorized stop signal (see the
+# tamper-lockout override code) rather than exiting — without this,
+# systemd would force-SIGKILL it after the default 90s timeout regardless
+# of whether the agent wanted to honor the stop, defeating the point.
+TimeoutStopSec=infinity
 
 [Install]
 WantedBy=multi-user.target

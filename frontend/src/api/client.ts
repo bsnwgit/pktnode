@@ -235,6 +235,8 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ command_type, payload }),
     }),
+  getOverrideCode: (id: number) =>
+    request<{ code: string; expires_in_sec: number }>(`/nodes/${id}/override-code`),
 
   // ── Enrollment ────────────────────────────────────────────────────────────
   getEnrollmentTokens: () => request<EnrollmentToken[]>('/enrollment/tokens'),

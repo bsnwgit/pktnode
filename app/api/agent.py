@@ -22,6 +22,7 @@ from pydantic import BaseModel
 
 from app.database import get_db
 from app.dependencies import CurrentNode, DbDep, hash_agent_token
+from app import totp
 
 router = APIRouter()
 
@@ -80,6 +81,11 @@ async def enroll(body: EnrollRequest, db: DbDep) -> dict:
     async with db.execute("SELECT id FROM nodes WHERE agent_uuid=?", (body.agent_uuid,)) as cur:
         existing = await cur.fetchone()
 
+    # Fresh override secret on every (re-)enroll, same reasoning as the
+    # agent token below — an admin never needs to remember the code, only
+    # look it up live, so rotating it on re-enroll costs nothing.
+    override_secret = totp.generate_secret()
+
     if existing:
         node_id = existing[0]
         await db.execute(
@@ -87,11 +93,11 @@ async def enroll(body: EnrollRequest, db: DbDep) -> dict:
             UPDATE nodes SET
                 hostname=?, os_type=?, os_version=?, arch=?, agent_version=?,
                 enrollment_token_id=?, status='pending', is_active=1,
-                updated_at=datetime('now')
+                override_secret=?, updated_at=datetime('now')
             WHERE id=?
             """,
             (body.hostname, body.os_type, body.os_version, body.arch,
-             body.agent_version, token_id, node_id),
+             body.agent_version, token_id, override_secret, node_id),
         )
         # Revoke any previously issued tokens for this node — re-enrollment
         # always mints a fresh one so a lost/leaked old token stops working.
@@ -100,11 +106,12 @@ async def enroll(body: EnrollRequest, db: DbDep) -> dict:
         async with db.execute(
             """
             INSERT INTO nodes
-                (agent_uuid, hostname, os_type, os_version, arch, agent_version, enrollment_token_id)
-            VALUES (?,?,?,?,?,?,?)
+                (agent_uuid, hostname, os_type, os_version, arch, agent_version,
+                 enrollment_token_id, override_secret)
+            VALUES (?,?,?,?,?,?,?,?)
             """,
             (body.agent_uuid, body.hostname, body.os_type, body.os_version,
-             body.arch, body.agent_version, token_id),
+             body.arch, body.agent_version, token_id, override_secret),
         ) as cur:
             node_id = cur.lastrowid
 
@@ -120,7 +127,12 @@ async def enroll(body: EnrollRequest, db: DbDep) -> dict:
     await db.commit()
 
     checkin_interval = await _get_setting_int(db, "agent_checkin_interval_sec", 60)
-    return {"node_id": node_id, "agent_token": agent_token, "checkin_interval_sec": checkin_interval}
+    return {
+        "node_id": node_id,
+        "agent_token": agent_token,
+        "checkin_interval_sec": checkin_interval,
+        "override_secret": override_secret,
+    }
 
 
 # ── Check-in ────────────────────────────────────────────────────────────────

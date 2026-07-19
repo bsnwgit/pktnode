@@ -95,6 +95,60 @@ function RunCommandModal({ onClose, onQueued }: { onClose: () => void; onQueued:
   )
 }
 
+function OverrideCodeModal({ nodeId, onClose }: { nodeId: number; onClose: () => void }) {
+  const [code, setCode] = useState<string | null>(null)
+  const [expiresIn, setExpiresIn] = useState(0)
+  const [error, setError] = useState('')
+
+  const load = async () => {
+    try {
+      const r = await api.getOverrideCode(nodeId)
+      setCode(r.code)
+      setExpiresIn(r.expires_in_sec)
+      setError('')
+    } catch (e: any) {
+      setError(e.message || 'Failed to load override code')
+    }
+  }
+
+  useEffect(() => {
+    load()
+    const id = setInterval(load, 5000)
+    return () => clearInterval(id)
+  }, [])
+
+  useEffect(() => {
+    if (expiresIn <= 0) return
+    const id = setInterval(() => setExpiresIn(s => Math.max(0, s - 1)), 1000)
+    return () => clearInterval(id)
+  }, [expiresIn])
+
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={onClose}>
+      <div className="bg-gray-900 border border-gray-700 rounded-xl w-full max-w-sm p-6" onClick={e => e.stopPropagation()}>
+        <h2 className="text-lg font-semibold text-white mb-2">Override Code</h2>
+        <p className="text-sm text-white mb-4">
+          Give this code to whoever needs to stop, restart, or uninstall the agent locally on this machine —
+          it's checked entirely offline, no network needed on the node's end.
+        </p>
+        {error ? (
+          <p className="text-sm text-red-400">{error}</p>
+        ) : code ? (
+          <div className="text-center py-4">
+            <p className="text-4xl font-mono font-bold tracking-widest text-white">{code}</p>
+            <p className="text-xs text-white mt-2">refreshes in {expiresIn}s</p>
+          </div>
+        ) : (
+          <p className="text-sm text-white">Loading…</p>
+        )}
+        <div className="flex justify-end pt-2">
+          <button onClick={onClose} className="px-4 py-2 text-sm text-white hover:text-white transition-colors">Close</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function NodeDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
@@ -105,6 +159,7 @@ export default function NodeDetail() {
   const [tab, setTab] = useState<Tab>('overview')
   const [loading, setLoading] = useState(true)
   const [showRunCommand, setShowRunCommand] = useState(false)
+  const [showOverrideCode, setShowOverrideCode] = useState(false)
   const [editingName, setEditingName] = useState(false)
   const [displayName, setDisplayName] = useState('')
 
@@ -180,6 +235,12 @@ export default function NodeDetail() {
               className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors">
               Run Remote Action
             </button>
+            {user?.role === 'admin' && (
+              <button onClick={() => setShowOverrideCode(true)}
+                className="px-4 py-2 text-sm bg-gray-800 hover:bg-gray-700 border border-gray-700 text-white rounded-lg transition-colors">
+                Override Code
+              </button>
+            )}
             {user?.role === 'admin' && node.is_active && (
               <button onClick={decommission}
                 className="px-4 py-2 text-sm bg-gray-800 hover:bg-gray-700 border border-gray-700 text-white rounded-lg transition-colors">
@@ -374,6 +435,9 @@ export default function NodeDetail() {
 
       {showRunCommand && (
         <RunCommandModal onClose={() => setShowRunCommand(false)} onQueued={queueCommand} />
+      )}
+      {showOverrideCode && id && (
+        <OverrideCodeModal nodeId={Number(id)} onClose={() => setShowOverrideCode(false)} />
       )}
     </div>
   )
