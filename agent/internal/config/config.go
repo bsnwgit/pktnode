@@ -35,6 +35,11 @@ type Status struct {
 	LastCheckinAt      string `json:"last_checkin_at"`
 	LastCheckinOK      bool   `json:"last_checkin_ok"`
 	LastError          string `json:"last_error"`
+	// Stopped is set just before the agent process exits for any reason
+	// (authorized tray stop, authorized CLI unlock + service stop) so the
+	// tray can tell "intentionally stopped" apart from "just hasn't
+	// checked in in a while" (e.g. a network blip) and quit itself in lockstep.
+	Stopped bool `json:"stopped"`
 }
 
 func StatusPath() string {
@@ -103,6 +108,92 @@ func ConsumeUnlockGrant() bool {
 		return false
 	}
 	return time.Since(time.Unix(ts, 0)) <= UnlockGrantMaxAge
+}
+
+// ── Tray stop-request control channel ───────────────────────────────────────
+//
+// The tray runs as a normal, unprivileged, logged-in user — it has no
+// access to Config (0600, root/SYSTEM-owned) and so cannot verify an
+// override code itself, and no permission to write into the agent's own
+// (root/SYSTEM-owned) config directory. ControlDir is a separate,
+// deliberately world-writable location the root agent prepares at startup
+// (see EnsureControlDir) purely so the tray can drop a request file into
+// it; the actual TOTP verification always happens in the privileged agent
+// process, which is the only one holding the real secret. The content of
+// the request (the code) is what's actually checked — the loose directory
+// permissions only grant "can ask", never "can act".
+type StopRequest struct {
+	Code string `json:"code"`
+}
+
+type StopResponse struct {
+	OK      bool   `json:"ok"`
+	Message string `json:"message"`
+}
+
+func stopRequestPath() string  { return filepath.Join(controlDir(), "stop-request.json") }
+func stopResponsePath() string { return filepath.Join(controlDir(), "stop-response.json") }
+
+// EnsureControlDir creates (and forces permissive access on) the control
+// directory. Must be called by the root/SYSTEM agent at startup — the
+// tray never calls this, since an unprivileged process usually can't
+// create it in the first place.
+func EnsureControlDir() error {
+	dir := controlDir()
+	if err := os.MkdirAll(dir, 0o777); err != nil {
+		return err
+	}
+	return applyControlDirACL(dir)
+}
+
+// WriteStopRequest is called by the (unprivileged) tray to ask the root
+// agent to verify code and, if valid, perform an authorized stop of both
+// itself and the tray.
+func WriteStopRequest(code string) error {
+	data, err := json.Marshal(StopRequest{Code: code})
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(stopRequestPath(), data, 0o666)
+}
+
+// ReadAndClearStopRequest is polled by the root agent. Single-use: the
+// file is removed whether or not it parses, so a garbled write can't wedge
+// the poller forever.
+func ReadAndClearStopRequest() (*StopRequest, bool) {
+	data, err := os.ReadFile(stopRequestPath())
+	if err != nil {
+		return nil, false
+	}
+	os.Remove(stopRequestPath())
+	var req StopRequest
+	if json.Unmarshal(data, &req) != nil {
+		return nil, false
+	}
+	return &req, true
+}
+
+// WriteStopResponse is called by the root agent after checking a request.
+func WriteStopResponse(ok bool, message string) error {
+	data, err := json.Marshal(StopResponse{OK: ok, Message: message})
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(stopResponsePath(), data, 0o666)
+}
+
+// ReadAndClearStopResponse is polled by the tray after it submits a request.
+func ReadAndClearStopResponse() (*StopResponse, bool) {
+	data, err := os.ReadFile(stopResponsePath())
+	if err != nil {
+		return nil, false
+	}
+	os.Remove(stopResponsePath())
+	var resp StopResponse
+	if json.Unmarshal(data, &resp) != nil {
+		return nil, false
+	}
+	return &resp, true
 }
 
 var ErrNotEnrolled = errors.New("agent is not enrolled — run the installer with --server and --token first")

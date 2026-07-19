@@ -14,6 +14,8 @@ import (
 	"pktnode-agent/internal/commands"
 	"pktnode-agent/internal/config"
 	"pktnode-agent/internal/inventory"
+	"pktnode-agent/internal/svcinstall"
+	"pktnode-agent/internal/totp"
 )
 
 func archName() string { return runtime.GOARCH }
@@ -77,6 +79,11 @@ func Run(stopCh <-chan struct{}) error {
 		return err
 	}
 
+	if err := config.EnsureControlDir(); err != nil {
+		log.Printf("warning: failed to prepare control dir for tray stop requests: %v", err)
+	}
+	go pollStopRequests(cfg)
+
 	client := apiclient.New(cfg.ServerURL, cfg.AgentToken)
 	interval := time.Duration(cfg.CheckinIntervalSec) * time.Second
 	if interval <= 0 {
@@ -91,9 +98,55 @@ func Run(stopCh <-chan struct{}) error {
 
 		select {
 		case <-stopCh:
+			markStopped(cfg)
 			return nil
 		case <-time.After(interval):
 		}
+	}
+}
+
+// pollStopRequests watches for a code the tray dropped into the (world-
+// writable) control dir, verifies it against the real secret (which only
+// this privileged process holds), and — if valid — asks the OS service
+// manager to stop this same service for real. That triggers the existing
+// SIGTERM/svc.Stop handler, which is what actually closes stopCh above;
+// this function never touches stopCh directly, so there's exactly one
+// authorized-shutdown code path instead of two to keep in sync.
+func pollStopRequests(cfg *config.Config) {
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	for range ticker.C {
+		req, ok := config.ReadAndClearStopRequest()
+		if !ok {
+			continue
+		}
+		if cfg.OverrideSecret != "" && totp.Verify(cfg.OverrideSecret, req.Code) {
+			log.Println("authorized stop requested via tray — stopping agent")
+			if err := config.WriteStopResponse(true, "Authorized — stopping the agent now."); err != nil {
+				log.Printf("failed to write stop response: %v", err)
+			}
+			if err := config.WriteUnlockGrant(); err != nil {
+				log.Printf("failed to write unlock grant: %v", err)
+				continue
+			}
+			svcinstall.SelfStop()
+		} else {
+			log.Println("tray stop request rejected — invalid override code")
+			if err := config.WriteStopResponse(false, "Incorrect or expired override code."); err != nil {
+				log.Printf("failed to write stop response: %v", err)
+			}
+		}
+	}
+}
+
+func markStopped(cfg *config.Config) {
+	status, err := config.LoadStatus()
+	if err != nil {
+		status = &config.Status{ServerURL: cfg.ServerURL, CheckinIntervalSec: cfg.CheckinIntervalSec}
+	}
+	status.Stopped = true
+	if err := config.SaveStatus(status); err != nil {
+		log.Printf("failed to write final status: %v", err)
 	}
 }
 
