@@ -15,6 +15,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 
@@ -109,6 +110,11 @@ func runInstall(args []string) {
 // one yet (see README) — this is entirely best-effort and never fails
 // the overall install.
 func installTrayIfPresent() {
+	if runtime.GOOS == "linux" && !hasGraphicalSession() {
+		fmt.Println("No graphical session detected — skipping the status icon (this looks like a headless/CLI-only install).")
+		return
+	}
+
 	self, err := os.Executable()
 	if err != nil {
 		return
@@ -132,6 +138,20 @@ func installTrayIfPresent() {
 		return
 	}
 	fmt.Println("Installed status icon to", trayInstallPath, "(shows up next time you log in)")
+}
+
+// hasGraphicalSession is a best-effort check for whether this Linux box
+// has a desktop environment at all — most Linux servers are headless
+// (installed over SSH, no X11/Wayland ever running), and there's no point
+// registering an XDG autostart entry that will simply never trigger.
+// systemd's graphical.target is the standard signal a distro boots to a
+// GUI; non-systemd distros or anything that fails this check are treated
+// as headless (skip — a false negative here just means no tray, which is
+// always safe; a false positive would register a harmless no-op autostart
+// entry, not actually install anything visible).
+func hasGraphicalSession() bool {
+	err := exec.Command("systemctl", "is-active", "--quiet", "graphical.target").Run()
+	return err == nil
 }
 
 func runUnlock(args []string) {
@@ -206,10 +226,19 @@ func copySelf(dest string) error {
 	return copyFile(self, dest)
 }
 
-// copyFile copies src to dest (mode 0755), creating parent directories
-// as needed.
+// copyFile copies src to dest (mode 0755), creating parent directories as
+// needed. Writes to a temp file in the same directory first and renames
+// it over dest, rather than truncating dest in place — on Linux (unlike
+// macOS) opening an already-running binary with O_TRUNC fails with
+// "text file busy" when reinstalling/upgrading on top of an existing
+// install, since the kernel won't let you truncate the backing file of a
+// process that's currently executing it. Rename swaps the directory entry
+// instead: the old inode stays valid for whatever still has it open (the
+// currently-running old agent process) until that process exits, and the
+// new binary takes over the path for every future invocation.
 func copyFile(src, dest string) error {
-	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+	destDir := filepath.Dir(dest)
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
 		return err
 	}
 
@@ -219,14 +248,24 @@ func copyFile(src, dest string) error {
 	}
 	defer in.Close()
 
-	out, err := os.OpenFile(dest, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o755)
+	tmp, err := os.CreateTemp(destDir, ".pktnode-agent-*.tmp")
 	if err != nil {
 		return err
 	}
-	defer out.Close()
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath) // no-op once the rename below succeeds
 
-	if _, err := io.Copy(out, in); err != nil {
+	if _, err := io.Copy(tmp, in); err != nil {
+		tmp.Close()
 		return err
 	}
-	return out.Close()
+	if err := tmp.Chmod(0o755); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+
+	return os.Rename(tmpPath, dest)
 }
