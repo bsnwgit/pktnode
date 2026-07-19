@@ -1,4 +1,4 @@
-import { ReactNode, useState, useEffect } from 'react'
+import { Fragment, ReactNode, useState, useEffect } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../store/auth'
 import { api } from '../api/client'
@@ -71,11 +71,12 @@ function ChangePasswordModal({ onClose }: { onClose: () => void }) {
 }
 
 const NAV = [
-  { to: '/',            label: 'Dashboard', icon: '◑', adminOnly: false },
-  { to: '/nodes',       label: 'Nodes',     icon: '⬡', adminOnly: false },
-  { to: '/alerts',      label: 'Alerts',    icon: '△', adminOnly: false },
-  { to: '/logs',        label: 'Logs',      icon: '▤', adminOnly: false },
-  { to: '/settings',    label: 'Settings',  icon: '⚙', adminOnly: true },
+  { to: '/',            label: 'Dashboard',  icon: '◑', adminOnly: false },
+  { to: '/nodes',       label: 'Nodes',      icon: '⬡', adminOnly: false },
+  { to: '/enrollment',  label: 'Enrollment', icon: '⚷', adminOnly: true, gapAfter: true },
+  { to: '/alerts',      label: 'Alerts',     icon: '△', adminOnly: false },
+  { to: '/logs',        label: 'Logs',       icon: '▤', adminOnly: false },
+  { to: '/settings',    label: 'Settings',   icon: '⚙', adminOnly: true },
 ]
 
 const INTERVALS = [
@@ -155,26 +156,28 @@ export default function Layout({ children }: { children: ReactNode }) {
         </div>
 
         <nav className="flex-1 px-2 py-4 space-y-0.5">
-          {NAV.filter(n => !n.adminOnly || user?.role === 'admin').map(({ to, label, icon }) => (
-            <NavLink
-              key={to}
-              to={to}
-              end={to === '/'}
-              className={({ isActive }) => clsx(
-                'flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors',
-                isActive
-                  ? 'bg-blue-600/20 text-blue-300 font-medium'
-                  : 'text-white hover:text-white hover:bg-gray-800',
-              )}
-            >
-              <span className="text-base leading-none">{icon}</span>
-              <span>{label}</span>
-              {label === 'Alerts' && unacked > 0 && (
-                <span className="ml-auto bg-red-500 text-white text-xs font-bold rounded-full px-1.5 py-0.5 leading-none">
-                  {unacked}
-                </span>
-              )}
-            </NavLink>
+          {NAV.filter(n => !n.adminOnly || user?.role === 'admin').map(({ to, label, icon, gapAfter }) => (
+            <Fragment key={to}>
+              <NavLink
+                to={to}
+                end={to === '/'}
+                className={({ isActive }) => clsx(
+                  'flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors',
+                  isActive
+                    ? 'bg-blue-600/20 text-blue-300 font-medium'
+                    : 'text-white hover:text-white hover:bg-gray-800',
+                )}
+              >
+                <span className="text-base leading-none">{icon}</span>
+                <span>{label}</span>
+                {label === 'Alerts' && unacked > 0 && (
+                  <span className="ml-auto bg-red-500 text-white text-xs font-bold rounded-full px-1.5 py-0.5 leading-none">
+                    {unacked}
+                  </span>
+                )}
+              </NavLink>
+              {gapAfter && <div className="h-px bg-gray-800 mx-2 my-1.5" />}
+            </Fragment>
           ))}
         </nav>
 
