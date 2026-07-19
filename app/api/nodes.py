@@ -302,3 +302,51 @@ async def queue_command(node_id: int, body: CommandIn, user: AnalystUser, db: Db
         command_id = cur.lastrowid
     await db.commit()
     return {"id": command_id, "status": "pending"}
+
+
+# ── Messages (2-way chat with the logged-in user on the node) ───────────────
+# Admin -> agent messages are handed to the agent on its next check-in and
+# shown by the tray helper as a native dialog; a reply typed there comes
+# back via POST /api/agent/messages/reply. Same polling pattern as commands
+# — there's no push channel to a node, so delivery always waits for the
+# node's next check-in interval.
+
+class MessageIn(BaseModel):
+    message: str
+
+
+@router.get("/{node_id}/messages")
+async def list_messages(node_id: int, _: CurrentUser, db: DbDep) -> list[dict]:
+    db.row_factory = aiosqlite.Row
+    async with db.execute(
+        """
+        SELECT m.id, m.sender, m.message, m.created_at, m.delivered_at,
+               u.username AS created_by
+        FROM node_messages m
+        LEFT JOIN users u ON u.id = m.created_by
+        WHERE m.node_id = ?
+        ORDER BY m.created_at ASC
+        LIMIT 500
+        """,
+        (node_id,),
+    ) as cur:
+        rows = await cur.fetchall()
+    return [dict(r) for r in rows]
+
+
+@router.post("/{node_id}/messages", status_code=201)
+async def send_message(node_id: int, body: MessageIn, user: AnalystUser, db: DbDep) -> dict:
+    if not body.message.strip():
+        raise HTTPException(status_code=400, detail="message is required")
+    async with db.execute("SELECT id FROM nodes WHERE id=? AND is_active=1", (node_id,)) as cur:
+        row = await cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Node not found or decommissioned")
+
+    async with db.execute(
+        "INSERT INTO node_messages (node_id, sender, message, created_by) VALUES (?, 'admin', ?, ?)",
+        (node_id, body.message.strip(), user["id"]),
+    ) as cur:
+        message_id = cur.lastrowid
+    await db.commit()
+    return {"id": message_id}

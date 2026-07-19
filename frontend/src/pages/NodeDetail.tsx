@@ -4,7 +4,7 @@ import clsx from 'clsx'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from 'recharts'
-import { api, NodeDetail as NodeDetailType, CommandRecord } from '../api/client'
+import { api, NodeDetail as NodeDetailType, CommandRecord, NodeMessage } from '../api/client'
 import { useAuth } from '../store/auth'
 import HelpButton from '../components/HelpButton'
 import ContextMenu from '../components/ContextMenu'
@@ -85,7 +85,7 @@ function fmtTime(ts: string | null): string {
   return new Date(toUtc(ts)).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })
 }
 
-type Tab = 'overview' | 'software' | 'processes' | 'metrics' | 'commands'
+type Tab = 'overview' | 'software' | 'processes' | 'metrics' | 'commands' | 'messages'
 
 function MetricsChart({ history }: { history: NodeDetailType['metrics_history'] }) {
   const data = [...history]
@@ -280,6 +280,9 @@ export default function NodeDetail() {
   const [showOverrideCode, setShowOverrideCode] = useState(false)
   const [editingName, setEditingName] = useState(false)
   const [displayName, setDisplayName] = useState('')
+  const [messages, setMessages] = useState<NodeMessage[]>([])
+  const [newMessage, setNewMessage] = useState('')
+  const [sendingMessage, setSendingMessage] = useState(false)
 
   const load = async () => {
     if (!id) return
@@ -289,12 +292,36 @@ export default function NodeDetail() {
       setNode(n)
       setDisplayName(n.display_name || '')
       setCommands(await api.getNodeCommands(Number(id)))
+      setMessages(await api.getNodeMessages(Number(id)))
     } finally {
       setLoading(false)
     }
   }
 
   useEffect(() => { load() }, [id])
+
+  // Messages come back via the node's own check-in interval (no push
+  // channel), so poll quietly while this tab is open to pick up replies —
+  // same pattern as Alerts' silent auto-resolve poll.
+  useEffect(() => {
+    if (tab !== 'messages' || !id) return
+    const poll = setInterval(async () => {
+      setMessages(await api.getNodeMessages(Number(id)))
+    }, 10_000)
+    return () => clearInterval(poll)
+  }, [tab, id])
+
+  const sendMessage = async () => {
+    if (!id || !newMessage.trim()) return
+    setSendingMessage(true)
+    try {
+      await api.sendNodeMessage(Number(id), newMessage.trim())
+      setNewMessage('')
+      setMessages(await api.getNodeMessages(Number(id)))
+    } finally {
+      setSendingMessage(false)
+    }
+  }
 
   const saveDisplayName = async () => {
     if (!id) return
@@ -443,7 +470,7 @@ export default function NodeDetail() {
 
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-1 bg-gray-900 border border-gray-800 rounded-xl p-1 w-fit">
-          {(['overview', 'software', 'processes', 'metrics', 'commands'] as Tab[]).map(t => (
+          {(['overview', 'software', 'processes', 'metrics', 'commands', 'messages'] as Tab[]).map(t => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -455,7 +482,7 @@ export default function NodeDetail() {
             </button>
           ))}
         </div>
-        {tab !== 'overview' && (
+        {tab !== 'overview' && tab !== 'messages' && (
           <input
             type="text"
             placeholder={`Search ${tab}…`}
@@ -643,6 +670,50 @@ export default function NodeDetail() {
               )}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {tab === 'messages' && (
+        <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden flex flex-col" style={{ height: '32rem' }}>
+          <div className="flex-1 overflow-y-auto p-4 space-y-3">
+            {messages.length === 0 && (
+              <p className="text-sm text-white text-center py-8">
+                No messages yet. Messages are delivered on the node's next check-in — there's no live push, so replies can take a bit to show up here.
+              </p>
+            )}
+            {messages.map(m => (
+              <div key={m.id} className={`flex ${m.sender === 'admin' ? 'justify-end' : 'justify-start'}`}>
+                <div className={`max-w-[70%] rounded-xl px-3 py-2 ${
+                  m.sender === 'admin' ? 'bg-blue-600/30 border border-blue-700/40' : 'bg-gray-800 border border-gray-700'
+                }`}>
+                  <p className="text-sm text-white whitespace-pre-wrap break-words">{m.message}</p>
+                  <p className="text-[10px] text-white mt-1">
+                    {m.sender === 'admin' ? (m.created_by || 'admin') : 'user'} · {fmtTime(m.created_at)}
+                    {m.sender === 'admin' && !m.delivered_at && ' · queued'}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+          {canAct && (
+            <div className="border-t border-gray-800 p-3 flex items-end gap-2">
+              <textarea
+                value={newMessage}
+                onChange={e => setNewMessage(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage() } }}
+                placeholder="Message the logged-in user… (delivered on next check-in)"
+                rows={2}
+                className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 resize-none focus:outline-none focus:border-blue-500"
+              />
+              <button
+                onClick={sendMessage}
+                disabled={sendingMessage || !newMessage.trim()}
+                className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors disabled:opacity-50"
+              >
+                Send
+              </button>
+            </div>
+          )}
         </div>
       )}
 
