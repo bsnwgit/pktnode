@@ -121,7 +121,8 @@ after this step), installs itself as a native service, and starts checking in.
 
 ```
 pktnode-agent install --server <url> --token <enrollment-token>
-pktnode-agent uninstall
+pktnode-agent uninstall --unlock-code <code>
+pktnode-agent unlock <code>
 pktnode-agent run        # invoked by the OS service manager; not for direct use
 pktnode-agent version
 ```
@@ -140,6 +141,48 @@ From a node's detail page, admins/analysts can queue: `restart_service`,
 `reboot`, `shutdown`. Commands are picked up on the node's next check-in
 (so latency is bounded by the check-in interval, not instant) and results
 are visible in the node's Commands tab.
+
+### Status icon (tray helper)
+
+A small per-user helper (`agent/cmd/pktnode-tray`) shows agent status
+(online/offline, last check-in) in the macOS menu bar or Windows system
+tray. It's a *separate* process from the root/SYSTEM agent service —
+root/SYSTEM processes can't draw any UI on any of the three OSes, so the
+root agent writes a world-readable `status.json` after each check-in and
+the tray helper (running in the user's own login session) just reads it;
+it has no network access or credentials of its own. Installed
+automatically by `install-agent.sh`/`.ps1` when a tray build exists for
+the target OS/arch (see `agent/build.sh` — not every target has one; cgo
++ a native GUI toolkit is required, so Linux needs building natively on a
+Linux box with GTK3/libappindicator3-dev, and Windows/arm64 has no
+readily available cgo cross-toolchain).
+
+### Tamper lockout (override code)
+
+Stopping, restarting, or uninstalling the agent through the normal OS
+service manager (`systemctl`/`launchctl`/`Stop-Service`) or the CLI's own
+`uninstall` requires a live **override code** — a 6-digit, 30-second
+TOTP code (RFC 6238) derived from a secret issued once at enrollment.
+Admins read the current code from a node's detail page (**Override
+Code** button); the agent verifies it **entirely offline** — no network
+call, just the shared secret plus its own clock — so this works even if
+the node has no route to the server at all.
+
+- `pktnode-agent uninstall --unlock-code <code>` checks the code inline.
+- For a plain service-manager stop, first run `pktnode-agent unlock
+  <code>` (grants a 2-minute window), *then* `systemctl stop`/`launchctl
+  stop`/`Stop-Service` as normal — the agent's signal/control-request
+  handler checks for that grant before honoring the stop and otherwise
+  just ignores it, so the service appears to hang rather than exit.
+
+**Honest limit, by design**: this is userland-only — there's no signed
+kernel-level component (no macOS System Extension, no WHQL-signed
+Windows minifilter, no Linux LSM/eBPF module). A local admin/root user
+can always force it with `kill -9`, Task Manager "End process tree", or
+equivalent; nothing short of a kernel driver can prevent that on any OS.
+What this *does* stop cold is the casual/GUI-level disable path — and
+regular (non-admin) local users were already blocked from touching a
+root/SYSTEM service before this existed.
 
 ## Frontend Build & Deploy
 
@@ -247,3 +290,13 @@ go run . install --server http://localhost:8764 --token <enrollment-token>
   script/service/power commands, not interactive.
 - `run_script` results truncate very long output; there's no streaming
   output for long-running scripts.
+- No tray/status-icon build for Linux (needs GTK3/libappindicator3-dev,
+  build natively on Linux) or Windows/arm64 (no readily available cgo
+  cross-toolchain for it).
+- No two-way messenger/chat between an admin and the logged-in user —
+  considered and deliberately deferred; the tray helper has no real GUI
+  toolkit today (just tray menu + one-shot native OS dialogs), and a
+  persistent chat window would need one added (e.g. Fyne/Wails) first.
+- Tamper lockout is userland-only by design (see the "Tamper lockout"
+  section above) — no kernel-level enforcement, so a local admin/root can
+  always force-kill the process.

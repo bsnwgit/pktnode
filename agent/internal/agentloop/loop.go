@@ -59,6 +59,7 @@ func Enroll(serverURL, enrollmentToken string) error {
 		AgentUUID:          agentUUID,
 		AgentToken:         resp.AgentToken,
 		CheckinIntervalSec: resp.CheckinIntervalSec,
+		OverrideSecret:     resp.OverrideSecret,
 	}
 	if cfg.CheckinIntervalSec <= 0 {
 		cfg.CheckinIntervalSec = 60

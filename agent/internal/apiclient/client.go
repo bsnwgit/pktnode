@@ -39,6 +39,7 @@ type EnrollResponse struct {
 	NodeID             int    `json:"node_id"`
 	AgentToken         string `json:"agent_token"`
 	CheckinIntervalSec int    `json:"checkin_interval_sec"`
+	OverrideSecret     string `json:"override_secret"`
 }
 
 func (c *Client) Enroll(req EnrollRequest) (*EnrollResponse, error) {
