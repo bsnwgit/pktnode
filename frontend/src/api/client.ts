@@ -154,6 +154,8 @@ export const api = {
       metrics_history_deleted: number
       status: string
     }>('/system/cleanup', { method: 'POST' }),
+  getStorageStats: () =>
+    request<{ db_size_bytes: number; row_counts: Record<string, number> }>('/system/storage-stats'),
   runBackupNow: () =>
     request<{ status: string; path: string; files: string[]; kept: number }>('/system/backup', { method: 'POST' }),
   listBackups: () =>
