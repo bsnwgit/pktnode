@@ -1820,6 +1820,7 @@ function NewTokenModal({ onClose, onCreated }: { onClose: () => void; onCreated:
 
 function InstallSnippet({ token }: { token: string }) {
   const [os, setOs] = useState<'darwin' | 'linux' | 'windows'>('darwin')
+  const [copied, setCopied] = useState(false)
   const baseUrl = window.location.origin
   const commands: Record<'darwin' | 'linux' | 'windows', string> = {
     darwin: `curl -fsSL ${baseUrl}/install-agent.sh | sudo bash -s -- --server ${baseUrl} --token ${token}`,
@@ -1841,7 +1842,15 @@ function InstallSnippet({ token }: { token: string }) {
       </div>
       <div className="flex items-start gap-2 bg-gray-950 border border-gray-800 rounded-lg px-3 py-2">
         <code className="text-xs text-white font-mono break-all flex-1">{commands[os]}</code>
-        <button onClick={() => copyToClipboard(commands[os])} className="shrink-0 text-xs text-white hover:text-white">Copy</button>
+        <button
+          onClick={async () => {
+            const ok = await copyToClipboard(commands[os])
+            if (ok) { setCopied(true); setTimeout(() => setCopied(false), 2000) }
+          }}
+          className="shrink-0 text-xs text-white hover:text-white"
+        >
+          {copied ? '✓ Copied' : 'Copy'}
+        </button>
       </div>
     </div>
   )
