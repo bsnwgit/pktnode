@@ -8,8 +8,9 @@ const Dashboard  = lazy(() => import('./pages/Dashboard'))
 const Alerts     = lazy(() => import('./pages/Alerts'))
 const Logs       = lazy(() => import('./pages/Logs'))
 const Settings   = lazy(() => import('./pages/Settings'))
-const Nodes      = lazy(() => import('./pages/Nodes'))
-const NodeDetail = lazy(() => import('./pages/NodeDetail'))
+const Nodes          = lazy(() => import('./pages/Nodes'))
+const NodeDetail     = lazy(() => import('./pages/NodeDetail'))
+const Decommissioned = lazy(() => import('./pages/Decommissioned'))
 
 function PageFallback() {
   return <div className="flex items-center justify-center h-48 text-white">Loading…</div>
@@ -50,6 +51,11 @@ export default function App() {
           <Route path="/nodes/:id" element={
             <ProtectedRoute>
               <Suspense fallback={<PageFallback />}><NodeDetail /></Suspense>
+            </ProtectedRoute>
+          } />
+          <Route path="/decommissioned" element={
+            <ProtectedRoute>
+              <Suspense fallback={<PageFallback />}><Decommissioned /></Suspense>
             </ProtectedRoute>
           } />
           <Route path="/alerts" element={

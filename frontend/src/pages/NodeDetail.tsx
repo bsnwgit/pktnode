@@ -191,10 +191,20 @@ export default function NodeDetail() {
       '- Revokes its agent token and override (unlock) code — a leftover local install can no longer check in or unlock/uninstall itself with old credentials\n' +
       '- Clears its current software/process/network snapshots\n' +
       '- Keeps metrics, command, and alert history for the record\n\n' +
-      'Use Delete instead if you want the node removed entirely.'
+      'It moves to the Decommissioned page — you can still view its full history there, and permanently delete it later if you want it gone entirely.'
     )) return
     await api.decommissionNode(Number(id))
-    await load()
+    navigate('/decommissioned')
+  }
+
+  const deletePermanently = async () => {
+    if (!id || !confirm(
+      'Permanently delete this node?\n\n' +
+      'This removes the node and ALL of its history — metrics, commands, and alerts included. ' +
+      'This cannot be undone.'
+    )) return
+    await api.deleteNode(Number(id))
+    navigate('/decommissioned')
   }
 
   const queueCommand = async (type: string, payload: Record<string, unknown>) => {
@@ -251,6 +261,12 @@ export default function NodeDetail() {
               <button onClick={decommission}
                 className="px-4 py-2 text-sm bg-gray-800 hover:bg-gray-700 border border-gray-700 text-white rounded-lg transition-colors">
                 Decommission &amp; Revoke
+              </button>
+            )}
+            {user?.role === 'admin' && !node.is_active && (
+              <button onClick={deletePermanently}
+                className="px-4 py-2 text-sm bg-red-900/40 hover:bg-red-900/60 border border-red-700/50 text-red-300 rounded-lg transition-colors">
+                Delete Permanently
               </button>
             )}
           </div>
