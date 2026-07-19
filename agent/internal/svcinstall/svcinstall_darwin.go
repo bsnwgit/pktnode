@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"time"
 )
 
 const (
@@ -60,11 +61,26 @@ func Install(execPath string) error {
 	if err := os.WriteFile(plistPath(), []byte(plist), 0o644); err != nil {
 		return fmt.Errorf("write plist: %w", err)
 	}
-	// bootstrap is the modern (10.11+) replacement for `launchctl load`.
-	if out, err := exec.Command("launchctl", "bootstrap", "system", plistPath()).CombinedOutput(); err != nil {
-		return fmt.Errorf("launchctl bootstrap: %w: %s", err, out)
+
+	// launchd can transiently refuse a bootstrap with "5: Input/output
+	// error" if it's attempted too soon after booting out the same label
+	// — reproduced live: manually re-running the identical bootstrap
+	// command a few seconds later succeeded with no other change. Retry
+	// once with a pause rather than failing the whole install on what's
+	// really just a timing race, not a real problem with the plist/binary.
+	var out []byte
+	var bootstrapErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			time.Sleep(2 * time.Second)
+		}
+		// bootstrap is the modern (10.11+) replacement for `launchctl load`.
+		out, bootstrapErr = exec.Command("launchctl", "bootstrap", "system", plistPath()).CombinedOutput()
+		if bootstrapErr == nil {
+			return nil
+		}
 	}
-	return nil
+	return fmt.Errorf("launchctl bootstrap: %w: %s", bootstrapErr, out)
 }
 
 func Uninstall() error {
