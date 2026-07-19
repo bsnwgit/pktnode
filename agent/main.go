@@ -15,6 +15,8 @@ import (
 	"io"
 	"log"
 	"os"
+	"path/filepath"
+	"runtime"
 
 	"pktnode-agent/internal/agentloop"
 	"pktnode-agent/internal/config"
@@ -86,9 +88,44 @@ func runInstall(args []string) {
 		log.Fatalf("failed to install service: %v", err)
 	}
 	fmt.Println("Service installed and started. pktNode agent is now running.")
+
+	installTrayIfPresent()
+}
+
+// installTrayIfPresent looks for a "pktnode-tray" binary sitting next to
+// this installer (the install-agent.sh/.ps1 scripts download it alongside
+// the agent when a tray build exists for this OS/arch) and, if found,
+// installs it as a per-user-session status icon. Not every platform has
+// one yet (see README) — this is entirely best-effort and never fails
+// the overall install.
+func installTrayIfPresent() {
+	self, err := os.Executable()
+	if err != nil {
+		return
+	}
+	trayName := "pktnode-tray"
+	if runtime.GOOS == "windows" {
+		trayName = "pktnode-tray.exe"
+	}
+	sibling := filepath.Join(filepath.Dir(self), trayName)
+	if _, err := os.Stat(sibling); err != nil {
+		return // no tray build for this platform — silently skip
+	}
+
+	trayInstallPath := svcinstall.TrayInstallPath()
+	if err := copyFile(sibling, trayInstallPath); err != nil {
+		log.Printf("warning: found a tray binary but failed to install it: %v", err)
+		return
+	}
+	if err := svcinstall.InstallTray(trayInstallPath); err != nil {
+		log.Printf("warning: failed to register the tray status icon: %v", err)
+		return
+	}
+	fmt.Println("Installed status icon to", trayInstallPath, "(shows up next time you log in)")
 }
 
 func runUninstall() {
+	_ = svcinstall.UninstallTray() // best-effort, don't block on it
 	if err := svcinstall.Uninstall(); err != nil {
 		log.Fatalf("failed to uninstall service: %v", err)
 	}
@@ -114,16 +151,21 @@ func copySelf(dest string) error {
 	if self == dest {
 		return nil
 	}
+	return copyFile(self, dest)
+}
 
-	if err := os.MkdirAll(dirOf(dest), 0o755); err != nil {
+// copyFile copies src to dest (mode 0755), creating parent directories
+// as needed.
+func copyFile(src, dest string) error {
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return err
 	}
 
-	src, err := os.Open(self)
+	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}
-	defer src.Close()
+	defer in.Close()
 
 	out, err := os.OpenFile(dest, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o755)
 	if err != nil {
@@ -131,17 +173,8 @@ func copySelf(dest string) error {
 	}
 	defer out.Close()
 
-	if _, err := io.Copy(out, src); err != nil {
+	if _, err := io.Copy(out, in); err != nil {
 		return err
 	}
 	return out.Close()
-}
-
-func dirOf(path string) string {
-	for i := len(path) - 1; i >= 0; i-- {
-		if path[i] == '/' || path[i] == '\\' {
-			return path[:i]
-		}
-	}
-	return "."
 }

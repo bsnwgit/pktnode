@@ -35,16 +35,25 @@ case "$(uname -m)" in
   *) echo "Unsupported architecture: $(uname -m)" >&2; exit 1 ;;
 esac
 
+tmpdir="$(mktemp -d)"
+trap 'rm -rf "$tmpdir"' EXIT
+
 binary="pktnode-agent-${os}-${arch}"
 url="${SERVER%/}/agent-releases/${binary}"
-tmp="$(mktemp)"
-trap 'rm -f "$tmp"' EXIT
-
 echo "Downloading $binary from $SERVER..."
-curl -fsSL "$url" -o "$tmp"
-chmod +x "$tmp"
+curl -fsSL "$url" -o "$tmpdir/pktnode-agent"
+chmod +x "$tmpdir/pktnode-agent"
+
+# Tray status icon — best-effort, not every OS/arch has one built (see
+# agent/build.sh). Named as a fixed sibling filename so the agent binary
+# can find it regardless of which OS/arch build it came from.
+tray_binary="pktnode-tray-${os}-${arch}"
+if curl -fsSL "${SERVER%/}/agent-releases/${tray_binary}" -o "$tmpdir/pktnode-tray" 2>/dev/null; then
+  chmod +x "$tmpdir/pktnode-tray"
+  echo "Downloaded status icon helper."
+fi
 
 echo "Installing pktNode agent..."
-"$tmp" install --server "$SERVER" --token "$TOKEN"
+"$tmpdir/pktnode-agent" install --server "$SERVER" --token "$TOKEN"
 
 echo "Done."
