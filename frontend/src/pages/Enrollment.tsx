@@ -126,6 +126,17 @@ export default function Enrollment() {
     await load()
   }
 
+  const [rotating, setRotating] = useState<number | null>(null)
+  const getInstallCommand = async (t: EnrollmentToken) => {
+    setRotating(t.id)
+    try {
+      const res = await api.rotateEnrollmentToken(t.id)
+      setNewToken(res.token)
+    } finally {
+      setRotating(null)
+    }
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-2">
@@ -134,6 +145,7 @@ export default function Enrollment() {
           <HelpButton title="Enrollment — How It Works">
             <p>An enrollment token is a shared secret handed to the agent installer. The agent exchanges it once for its own per-node bearer token, then never uses the enrollment token again — so a leaked install token doesn't compromise already-enrolled nodes.</p>
             <p>Set <span className="text-gray-300 font-medium">max uses</span> to 1 for a single-machine install, or leave it unlimited for a shared rollout token across many machines. Revoking a token immediately blocks any future enrollment attempts with it, but does not affect nodes already enrolled.</p>
+            <p>The raw token is only ever shown once — the server stores just its hash, never the plaintext. If you navigate away, use <span className="text-gray-300 font-medium">Get Install Command</span> on that row any time later to generate a fresh secret for the same token (same label/limits, use count reset) rather than creating a new one.</p>
           </HelpButton>
         </div>
         <button onClick={() => setShowNew(true)}
@@ -145,7 +157,7 @@ export default function Enrollment() {
       {newToken && (
         <div className="bg-blue-900/20 border border-blue-700/40 rounded-xl p-4 space-y-3">
           <p className="text-sm text-white">
-            Token created — copy the install command below now. The raw token won't be shown again.
+            Copy the install command below now — the raw token won't be shown again after you navigate away or dismiss this.
           </p>
           <InstallSnippet token={newToken} />
           <button onClick={() => setNewToken(null)} className="text-xs text-white hover:text-white underline">Dismiss</button>
@@ -179,7 +191,13 @@ export default function Enrollment() {
                       {t.revoked ? 'Revoked' : 'Active'}
                     </span>
                   </td>
-                  <td className="px-5 py-3 text-right">
+                  <td className="px-5 py-3 text-right space-x-3 whitespace-nowrap">
+                    {!t.revoked && (
+                      <button onClick={() => getInstallCommand(t)} disabled={rotating === t.id}
+                        className="text-xs text-blue-400 hover:text-blue-300 transition-colors disabled:opacity-50">
+                        {rotating === t.id ? 'Generating…' : 'Get Install Command'}
+                      </button>
+                    )}
                     {!t.revoked && (
                       <button onClick={() => setConfirmRevoke(t)} className="text-xs text-white hover:text-red-400 transition-colors">Revoke</button>
                     )}

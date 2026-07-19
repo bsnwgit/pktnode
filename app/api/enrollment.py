@@ -77,6 +77,35 @@ async def create_token(body: EnrollmentTokenIn, user: AdminUser, db: DbDep) -> d
     return {"id": token_id, "token": raw_token, "expires_at": expires_at}
 
 
+@router.post("/tokens/{token_id}/rotate")
+async def rotate_token(token_id: int, _: AdminUser, db: DbDep) -> dict:
+    """
+    Generate a fresh raw secret for this same token record — the only way
+    to get an install command for a token again once the original raw
+    value was dismissed (the server only ever stores a hash, never the
+    plaintext, so the old value genuinely can't be shown again). Keeps the
+    label/expiry/max-uses policy and enrolled-node history; resets
+    use_count back to 0 so a fully-used token is immediately usable again
+    rather than still reporting itself exhausted.
+    """
+    async with db.execute(
+        "SELECT id, revoked FROM enrollment_tokens WHERE id=?", (token_id,)
+    ) as cur:
+        row = await cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Token not found")
+    if row[1]:
+        raise HTTPException(status_code=400, detail="Token is revoked — delete it and create a new one instead")
+
+    raw_token = secrets.token_urlsafe(32)
+    await db.execute(
+        "UPDATE enrollment_tokens SET token_hash=?, use_count=0 WHERE id=?",
+        (_hash_token(raw_token), token_id),
+    )
+    await db.commit()
+    return {"token": raw_token}
+
+
 @router.post("/tokens/{token_id}/revoke")
 async def revoke_token(token_id: int, _: AdminUser, db: DbDep) -> dict:
     async with db.execute("SELECT id FROM enrollment_tokens WHERE id=?", (token_id,)) as cur:
