@@ -101,6 +101,7 @@ function InstallSnippet({ token }: { token: string }) {
 }
 
 export default function Enrollment() {
+  const [tab, setTab]             = useState<'active' | 'revoked'>('active')
   const [tokens, setTokens]       = useState<EnrollmentToken[]>([])
   const [loading, setLoading]     = useState(true)
   const [showNew, setShowNew]     = useState(false)
@@ -164,6 +165,20 @@ export default function Enrollment() {
         </div>
       )}
 
+      <div className="flex items-center gap-1 bg-gray-900 border border-gray-800 rounded-xl p-1 w-fit">
+        {(['active', 'revoked'] as const).map(t => (
+          <button
+            key={t}
+            onClick={() => setTab(t)}
+            className={`text-sm px-4 py-1.5 rounded-lg capitalize transition-colors ${
+              tab === t ? 'bg-blue-600/20 text-blue-300 font-medium' : 'text-white hover:text-white'
+            }`}
+          >
+            {t} {t === 'active' ? `(${tokens.filter(x => !x.revoked).length})` : `(${tokens.filter(x => x.revoked).length})`}
+          </button>
+        ))}
+      </div>
+
       <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
         {loading ? (
           <div className="flex items-center justify-center h-24 text-white text-sm">Loading…</div>
@@ -175,22 +190,20 @@ export default function Enrollment() {
                 <th className="px-5 py-3 text-left text-xs font-medium text-white">Uses</th>
                 <th className="px-5 py-3 text-left text-xs font-medium text-white">Nodes enrolled</th>
                 <th className="px-5 py-3 text-left text-xs font-medium text-white">Expires</th>
-                <th className="px-5 py-3 text-left text-xs font-medium text-white">Status</th>
+                {tab === 'revoked' && <th className="px-5 py-3 text-left text-xs font-medium text-white">Revoked</th>}
                 <th className="px-5 py-3"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-800/50">
-              {tokens.map(t => (
+              {tokens.filter(t => (tab === 'active' ? !t.revoked : t.revoked)).map(t => (
                 <tr key={t.id} className="hover:bg-gray-800/30 transition-colors">
                   <td className="px-5 py-3 text-white">{t.label || <span className="text-white">(no label)</span>}</td>
                   <td className="px-5 py-3 text-white text-xs">{t.use_count}{t.max_uses ? ` / ${t.max_uses}` : ''}</td>
                   <td className="px-5 py-3 text-white text-xs">{t.nodes_enrolled}</td>
                   <td className="px-5 py-3 text-white text-xs">{t.expires_at ? new Date(t.expires_at).toLocaleDateString() : 'Never'}</td>
-                  <td className="px-5 py-3">
-                    <span className={`text-xs px-2 py-0.5 rounded ${t.revoked ? 'bg-gray-800 text-white border border-gray-700' : 'bg-green-900/40 text-green-400 border border-green-700/40'}`}>
-                      {t.revoked ? 'Revoked' : 'Active'}
-                    </span>
-                  </td>
+                  {tab === 'revoked' && (
+                    <td className="px-5 py-3 text-white text-xs">{t.revoked_at ? new Date(t.revoked_at).toLocaleString() : '—'}</td>
+                  )}
                   <td className="px-5 py-3 text-right space-x-3 whitespace-nowrap">
                     {!t.revoked && (
                       <button onClick={() => getInstallCommand(t)} disabled={rotating === t.id}
@@ -207,8 +220,10 @@ export default function Enrollment() {
                   </td>
                 </tr>
               ))}
-              {tokens.length === 0 && (
-                <tr><td colSpan={6} className="px-5 py-8 text-center text-sm text-white">No enrollment tokens yet</td></tr>
+              {tokens.filter(t => (tab === 'active' ? !t.revoked : t.revoked)).length === 0 && (
+                <tr><td colSpan={tab === 'revoked' ? 6 : 5} className="px-5 py-8 text-center text-sm text-white">
+                  {tab === 'active' ? 'No active enrollment tokens' : 'No revoked enrollment tokens'}
+                </td></tr>
               )}
             </tbody>
           </table>
