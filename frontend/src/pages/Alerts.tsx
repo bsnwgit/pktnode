@@ -420,6 +420,7 @@ export default function Alerts() {
   const [error, setError]           = useState('')
   const [eventsPage, setEventsPage] = useState(1)
   const [historyPage, setHistoryPage] = useState(1)
+  const [search, setSearch] = useState('')
 
   const loadEvents = async (silent = false) => {
     if (!silent) setLoading(true)
@@ -492,10 +493,18 @@ export default function Alerts() {
     await loadRules()
   }
 
-  const eventsTotalPages   = Math.max(1, Math.ceil(events.length / PAGE_SIZE))
-  const historyTotalPages  = Math.max(1, Math.ceil(history.length / PAGE_SIZE))
-  const eventsPageItems    = events.slice((eventsPage - 1) * PAGE_SIZE, eventsPage * PAGE_SIZE)
-  const historyPageItems   = history.slice((historyPage - 1) * PAGE_SIZE, historyPage * PAGE_SIZE)
+  const q = search.trim().toLowerCase()
+  const matchesSearch = (e: AlertEvent) =>
+    q === '' || [e.message, e.node_hostname, e.node_ip, e.rule_name, e.severity, e.rule_type]
+      .some(f => f !== null && f !== undefined && String(f).toLowerCase().includes(q))
+
+  const filteredEvents  = events.filter(matchesSearch)
+  const filteredHistory = history.filter(matchesSearch)
+
+  const eventsTotalPages   = Math.max(1, Math.ceil(filteredEvents.length / PAGE_SIZE))
+  const historyTotalPages  = Math.max(1, Math.ceil(filteredHistory.length / PAGE_SIZE))
+  const eventsPageItems    = filteredEvents.slice((eventsPage - 1) * PAGE_SIZE, eventsPage * PAGE_SIZE)
+  const historyPageItems   = filteredHistory.slice((historyPage - 1) * PAGE_SIZE, historyPage * PAGE_SIZE)
 
   return (
     <div className="space-y-4">
@@ -514,18 +523,29 @@ export default function Alerts() {
         )}
       </div>
 
-      <div className="flex items-center gap-1 bg-gray-900 border border-gray-800 rounded-xl p-1 w-fit">
-        {(['active', 'history', 'rules'] as Tab[]).map(t => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={`text-sm px-4 py-1.5 rounded-lg capitalize transition-colors ${
-              tab === t ? 'bg-blue-600/20 text-blue-300 font-medium' : 'text-white hover:text-white'
-            }`}
-          >
-            {t}
-          </button>
-        ))}
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div className="flex items-center gap-1 bg-gray-900 border border-gray-800 rounded-xl p-1 w-fit">
+          {(['active', 'history', 'rules'] as Tab[]).map(t => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              className={`text-sm px-4 py-1.5 rounded-lg capitalize transition-colors ${
+                tab === t ? 'bg-blue-600/20 text-blue-300 font-medium' : 'text-white hover:text-white'
+              }`}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+        {tab !== 'rules' && (
+          <input
+            type="text"
+            placeholder="Search alerts…"
+            value={search}
+            onChange={e => { setSearch(e.target.value); setEventsPage(1); setHistoryPage(1) }}
+            className="text-xs bg-gray-800 border border-gray-700 text-white placeholder-gray-500 rounded-lg px-3 py-1.5 w-56 focus:outline-none focus:border-blue-500"
+          />
+        )}
       </div>
 
       {tab === 'active' && (
@@ -536,7 +556,7 @@ export default function Alerts() {
           {loading ? (
             <p className="text-sm text-white">Loading…</p>
           ) : eventsPageItems.length === 0 ? (
-            <p className="text-sm text-white">No active alerts.</p>
+            <p className="text-sm text-white">{events.length === 0 ? 'No active alerts.' : 'No active alerts match your search.'}</p>
           ) : (
             eventsPageItems.map(e => <EventCard key={e.id} event={e} onAck={ack} />)
           )}
@@ -549,7 +569,7 @@ export default function Alerts() {
           {loading ? (
             <p className="text-sm text-white">Loading…</p>
           ) : historyPageItems.length === 0 ? (
-            <p className="text-sm text-white">No alert history.</p>
+            <p className="text-sm text-white">{history.length === 0 ? 'No alert history.' : 'No alert history matches your search.'}</p>
           ) : (
             historyPageItems.map(e => <EventCard key={e.id} event={e} onAck={ack} />)
           )}
