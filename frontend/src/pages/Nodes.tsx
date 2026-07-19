@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { api, NodeSummary, NodeStatus } from '../api/client'
 import { useAuth } from '../store/auth'
 import HelpButton from '../components/HelpButton'
+import ContextMenu from '../components/ContextMenu'
 
 const STATUS_STYLES: Record<string, string> = {
   online:        'bg-green-900/40 text-green-400 border border-green-700/40',
@@ -44,6 +45,8 @@ export default function Nodes() {
   const [q, setQ] = useState('')
   const [nodes, setNodes] = useState<NodeSummary[]>([])
   const [loading, setLoading] = useState(true)
+  const [menu, setMenu] = useState<{ x: number; y: number; node: NodeSummary } | null>(null)
+  const canAct = user?.role === 'admin' || user?.role === 'analyst'
 
   const load = async () => {
     setLoading(true)
@@ -64,6 +67,16 @@ export default function Nodes() {
     )) return
     await api.deleteNode(id)
     await load()
+  }
+
+  const powerAction = async (n: NodeSummary, action: 'reboot' | 'shutdown') => {
+    const hostname = n.display_name || n.hostname
+    if (!confirm(
+      `${action === 'reboot' ? 'Reboot' : 'Shut down'} ${hostname}?\n\n` +
+      `This will ${action} the node the next time it checks in. ` +
+      'Any unsaved work on that machine will be lost. Make sure that\'s intended.'
+    )) return
+    await api.queueCommand(n.id, action, {})
   }
 
   return (
@@ -121,7 +134,15 @@ export default function Nodes() {
             </thead>
             <tbody className="divide-y divide-gray-800/50">
               {nodes.map(n => (
-                <tr key={n.id} className="hover:bg-gray-800/30 transition-colors">
+                <tr
+                  key={n.id}
+                  className="hover:bg-gray-800/30 transition-colors"
+                  onContextMenu={e => {
+                    if (!canAct || n.status === 'decommissioned') return
+                    e.preventDefault()
+                    setMenu({ x: e.clientX, y: e.clientY, node: n })
+                  }}
+                >
                   <td className="px-5 py-3 cursor-pointer" onClick={() => navigate(`/nodes/${n.id}`)}>
                     <p className="text-white font-medium">{n.display_name || n.hostname}</p>
                     {n.current_user && <p className="text-xs text-white">{n.current_user}</p>}
@@ -152,6 +173,18 @@ export default function Nodes() {
           </table>
         )}
       </div>
+
+      {menu && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          onClose={() => setMenu(null)}
+          items={[
+            { label: 'Reboot', onClick: () => powerAction(menu.node, 'reboot') },
+            { label: 'Shut Down', onClick: () => powerAction(menu.node, 'shutdown'), danger: true },
+          ]}
+        />
+      )}
     </div>
   )
 }
