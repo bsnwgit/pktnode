@@ -175,17 +175,37 @@ async def update_node(node_id: int, body: NodeUpdate, _: AnalystUser, db: DbDep)
 
 @router.post("/{node_id}/decommission")
 async def decommission_node(node_id: int, _: AdminUser, db: DbDep) -> dict:
-    """Mark a node inactive and revoke its agent token — it stops appearing
-    as a live asset, but its history is kept, not deleted."""
+    """
+    Fully decommission and revoke a node — for a machine that's gone or had
+    its agent removed, not just temporarily offline:
+
+      - marks it inactive (stops appearing as a live asset)
+      - revokes its agent_tokens (any surviving copy of the agent can no
+        longer check in)
+      - clears its override_secret (the offline tamper-lockout code stops
+        working too — a leftover local install can't unlock/uninstall
+        itself with the old code anymore)
+      - purges current-state inventory snapshots (installed software,
+        running processes, network interfaces) — those describe "what's
+        on the machine right now" and are meaningless once it's gone
+
+    Deliberately keeps: metrics history, command history, and alert
+    history — those are an audit trail, not current state, and this
+    action is reversible in the sense that the node row itself (and that
+    history) survives; only DELETE removes the row entirely.
+    """
     async with db.execute("SELECT id FROM nodes WHERE id=?", (node_id,)) as cur:
         row = await cur.fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="Node not found")
     await db.execute(
-        "UPDATE nodes SET is_active=0, status='decommissioned', updated_at=datetime('now') WHERE id=?",
+        "UPDATE nodes SET is_active=0, status='decommissioned', override_secret=NULL, updated_at=datetime('now') WHERE id=?",
         (node_id,),
     )
     await db.execute("UPDATE agent_tokens SET revoked=1 WHERE node_id=?", (node_id,))
+    await db.execute("DELETE FROM node_software WHERE node_id=?", (node_id,))
+    await db.execute("DELETE FROM node_processes WHERE node_id=?", (node_id,))
+    await db.execute("DELETE FROM node_interfaces WHERE node_id=?", (node_id,))
     await db.commit()
     return {"ok": True}
 
