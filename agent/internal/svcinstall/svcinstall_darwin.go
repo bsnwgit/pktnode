@@ -44,7 +44,18 @@ const plistTemplate = `<?xml version="1.0" encoding="UTF-8"?>
 // Install writes the launchd plist and loads it. execPath must be the
 // final installed location of the binary (the caller is responsible for
 // copying it there first) since launchd re-execs it directly by path.
+//
+// Bootout first, best-effort — re-running the installer on top of an
+// already-loaded service (re-enrolling, or picking up a newer binary)
+// writes a fresh config.json with new credentials, but `launchctl
+// bootstrap` on an already-loaded label just errors out rather than
+// restarting it, leaving the *old* process running on its old, now-stale
+// token indefinitely even though the enrollment underneath it succeeded.
+// Booting it out first guarantees bootstrap always starts a genuinely
+// fresh process that reads the new config.
 func Install(execPath string) error {
+	exec.Command("launchctl", "bootout", "system/"+label).Run() // no-op if not loaded
+
 	plist := fmt.Sprintf(plistTemplate, label, execPath)
 	if err := os.WriteFile(plistPath(), []byte(plist), 0o644); err != nil {
 		return fmt.Errorf("write plist: %w", err)
