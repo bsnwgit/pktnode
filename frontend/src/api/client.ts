@@ -247,6 +247,7 @@ export const api = {
     }),
   revokeEnrollmentToken: (id: number) => request(`/enrollment/tokens/${id}/revoke`, { method: 'POST' }),
   deleteEnrollmentToken: (id: number) => request(`/enrollment/tokens/${id}`, { method: 'DELETE' }),
+  rotateEnrollmentToken: (id: number) => request<{ token: string }>(`/enrollment/tokens/${id}/rotate`, { method: 'POST' }),
 
   // ── Alerts ────────────────────────────────────────────────────────────────
   getAlertEvents: (params?: { active?: boolean; acked?: boolean; limit?: number }) => {
