@@ -1,0 +1,36 @@
+# Template — install.sh substitutes __INSTALL_DIR__ / __LOG_DIR__ /
+# __SERVICE_USER__ / __SERVICE_GROUP__ before installing to systemd.
+# For a manual install, replace these placeholders yourself.
+#
+# Host/port are NOT set here — app/server.py reads them from config.yaml at
+# each process start, so Settings → General → Port only needs config.yaml
+# rewritten + a restart, not a unit file edit.
+[Unit]
+Description=pktNode RMM — endpoint asset inventory and remote management
+Documentation=https://github.com/bsnwgit/pktnode
+After=network.target
+
+[Service]
+Type=simple
+User=__SERVICE_USER__
+Group=__SERVICE_GROUP__
+WorkingDirectory=__INSTALL_DIR__
+
+Environment=PKTNODE_CONFIG=__INSTALL_DIR__/config.yaml
+Environment=PKTNODE_INSTALL_DIR=__INSTALL_DIR__
+
+ExecStart=__INSTALL_DIR__/venv/bin/python -m app.server
+
+Restart=on-failure
+RestartSec=5
+StartLimitInterval=60
+StartLimitBurst=3
+
+StandardOutput=append:__LOG_DIR__/pktnode.log
+StandardError=append:__LOG_DIR__/pktnode.log
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

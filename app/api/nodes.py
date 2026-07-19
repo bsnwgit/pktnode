@@ -1,0 +1,259 @@
+"""
+app/api/nodes.py — Node (managed endpoint/asset) REST API. Human-facing,
+JWT-authenticated — see app/api/agent.py for the agent-facing check-in API
+these rows are populated from.
+"""
+from __future__ import annotations
+
+import json
+from typing import Any, Optional
+
+import aiosqlite
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
+
+from app.database import get_db
+from app.dependencies import AdminUser, AnalystUser, CurrentUser, DbDep
+
+router = APIRouter()
+
+
+async def _get_setting_int(db: aiosqlite.Connection, key: str, default: int) -> int:
+    async with db.execute("SELECT value FROM settings WHERE key=?", (key,)) as cur:
+        row = await cur.fetchone()
+    if not row:
+        return default
+    try:
+        return int(json.loads(row[0]))
+    except (ValueError, TypeError):
+        return default
+
+
+_STATUS_EXPR = """
+    CASE
+        WHEN n.is_active = 0 THEN 'decommissioned'
+        WHEN n.last_checkin_at IS NULL THEN 'pending'
+        WHEN n.last_checkin_at < datetime('now', ? || ' seconds') THEN 'stale'
+        WHEN n.last_checkin_at < datetime('now', ? || ' seconds') THEN 'offline'
+        ELSE 'online'
+    END AS status
+"""
+
+
+async def _status_params(db: aiosqlite.Connection) -> list[str]:
+    offline_after = await _get_setting_int(db, "offline_after_sec", 300)
+    stale_after = await _get_setting_int(db, "stale_after_sec", 86400)
+    return [f"-{stale_after}", f"-{offline_after}"]
+
+
+@router.get("/")
+async def list_nodes(
+    _: CurrentUser,
+    db: DbDep,
+    status: Optional[str] = Query(None, description="Filter by computed status"),
+    q: Optional[str] = Query(None, description="Search hostname/display_name"),
+) -> list[dict]:
+    db.row_factory = aiosqlite.Row
+    params = await _status_params(db)
+    clauses = []
+    if q:
+        clauses.append("(n.hostname LIKE ? OR n.display_name LIKE ?)")
+        params += [f"%{q}%", f"%{q}%"]
+
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    sql = f"""
+        SELECT n.id, n.agent_uuid, n.hostname, n.display_name, n.os_type, n.os_version,
+               n.arch, n.agent_version, n.ip_address, n.manufacturer, n.model,
+               n.cpu_model, n.cpu_cores, n.memory_total_mb, n.disk_total_gb, n.disk_free_gb,
+               n.uptime_seconds, n.current_user, n.tags_json, n.is_active,
+               n.first_seen_at, n.last_checkin_at,
+               {_STATUS_EXPR}
+        FROM nodes n
+        {where}
+        ORDER BY n.hostname
+    """
+    async with db.execute(sql, params) as cur:
+        rows = await cur.fetchall()
+
+    result = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["tags"] = json.loads(d.pop("tags_json"))
+        except Exception:
+            d["tags"] = []
+        result.append(d)
+
+    if status:
+        result = [d for d in result if d["status"] == status]
+    return result
+
+
+@router.get("/{node_id}")
+async def get_node(node_id: int, _: CurrentUser, db: DbDep) -> dict:
+    db.row_factory = aiosqlite.Row
+    params = await _status_params(db)
+    async with db.execute(
+        f"SELECT n.*, {_STATUS_EXPR} FROM nodes n WHERE n.id = ?",
+        (*params, node_id),
+    ) as cur:
+        row = await cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Node not found")
+    node = dict(row)
+    try:
+        node["tags"] = json.loads(node.pop("tags_json"))
+    except Exception:
+        node["tags"] = []
+
+    async with db.execute(
+        "SELECT name, version, publisher, install_date, last_seen_at FROM node_software WHERE node_id=? ORDER BY name",
+        (node_id,),
+    ) as cur:
+        node["software"] = [dict(r) for r in await cur.fetchall()]
+
+    async with db.execute(
+        "SELECT pid, name, cpu_pct, mem_mb, username, captured_at FROM node_processes WHERE node_id=? ORDER BY mem_mb DESC",
+        (node_id,),
+    ) as cur:
+        node["processes"] = [dict(r) for r in await cur.fetchall()]
+
+    async with db.execute(
+        "SELECT name, mac_address, ip_addresses, is_up FROM node_interfaces WHERE node_id=?",
+        (node_id,),
+    ) as cur:
+        interfaces = []
+        for r in await cur.fetchall():
+            i = dict(r)
+            try:
+                i["ip_addresses"] = json.loads(i["ip_addresses"])
+            except Exception:
+                i["ip_addresses"] = []
+            interfaces.append(i)
+        node["interfaces"] = interfaces
+
+    async with db.execute(
+        "SELECT cpu_pct, mem_pct, disk_pct, recorded_at FROM node_metrics_history "
+        "WHERE node_id=? ORDER BY recorded_at DESC LIMIT 500",
+        (node_id,),
+    ) as cur:
+        node["metrics_history"] = [dict(r) for r in await cur.fetchall()]
+
+    return node
+
+
+class NodeUpdate(BaseModel):
+    display_name: Optional[str] = None
+    notes: Optional[str] = None
+    tags: Optional[list[str]] = None
+
+
+@router.patch("/{node_id}")
+async def update_node(node_id: int, body: NodeUpdate, _: AnalystUser, db: DbDep) -> dict:
+    async with db.execute("SELECT id FROM nodes WHERE id=?", (node_id,)) as cur:
+        row = await cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Node not found")
+
+    updates: dict[str, Any] = {}
+    if body.display_name is not None:
+        updates["display_name"] = body.display_name
+    if body.notes is not None:
+        updates["notes"] = body.notes
+    if body.tags is not None:
+        updates["tags_json"] = json.dumps(body.tags)
+
+    if updates:
+        set_clause = ", ".join(f"{k}=?" for k in updates) + ", updated_at=datetime('now')"
+        await db.execute(
+            f"UPDATE nodes SET {set_clause} WHERE id=?", (*updates.values(), node_id)
+        )
+        await db.commit()
+    return {"ok": True}
+
+
+@router.post("/{node_id}/decommission")
+async def decommission_node(node_id: int, _: AdminUser, db: DbDep) -> dict:
+    """Mark a node inactive and revoke its agent token — it stops appearing
+    as a live asset, but its history is kept, not deleted."""
+    async with db.execute("SELECT id FROM nodes WHERE id=?", (node_id,)) as cur:
+        row = await cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Node not found")
+    await db.execute(
+        "UPDATE nodes SET is_active=0, status='decommissioned', updated_at=datetime('now') WHERE id=?",
+        (node_id,),
+    )
+    await db.execute("UPDATE agent_tokens SET revoked=1 WHERE node_id=?", (node_id,))
+    await db.commit()
+    return {"ok": True}
+
+
+@router.delete("/{node_id}", status_code=204)
+async def delete_node(node_id: int, _: AdminUser, db: DbDep) -> None:
+    async with db.execute("SELECT id FROM nodes WHERE id=?", (node_id,)) as cur:
+        row = await cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Node not found")
+    await db.execute("DELETE FROM nodes WHERE id=?", (node_id,))
+    await db.commit()
+
+
+# ── Remote actions ───────────────────────────────────────────────────────────
+
+class CommandIn(BaseModel):
+    command_type: str   # restart_service | kill_process | run_script | reboot | shutdown
+    payload: dict = {}
+
+
+_VALID_COMMAND_TYPES = {"restart_service", "kill_process", "run_script", "reboot", "shutdown"}
+
+
+@router.get("/{node_id}/commands")
+async def list_commands(node_id: int, _: CurrentUser, db: DbDep) -> list[dict]:
+    db.row_factory = aiosqlite.Row
+    async with db.execute(
+        """
+        SELECT c.id, c.command_type, c.payload_json, c.status, c.created_at,
+               c.sent_at, c.completed_at, c.exit_code, c.result_json,
+               u.username AS created_by
+        FROM commands c
+        LEFT JOIN users u ON u.id = c.created_by
+        WHERE c.node_id = ?
+        ORDER BY c.created_at DESC
+        LIMIT 200
+        """,
+        (node_id,),
+    ) as cur:
+        rows = await cur.fetchall()
+    result = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["payload"] = json.loads(d.pop("payload_json") or "{}")
+        except Exception:
+            d["payload"] = {}
+        try:
+            d["result"] = json.loads(d.pop("result_json")) if d.get("result_json") else None
+        except Exception:
+            d["result"] = None
+        result.append(d)
+    return result
+
+
+@router.post("/{node_id}/commands", status_code=201)
+async def queue_command(node_id: int, body: CommandIn, user: AnalystUser, db: DbDep) -> dict:
+    if body.command_type not in _VALID_COMMAND_TYPES:
+        raise HTTPException(status_code=400, detail=f"Unknown command_type: {body.command_type}")
+    async with db.execute("SELECT id FROM nodes WHERE id=? AND is_active=1", (node_id,)) as cur:
+        row = await cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Node not found or decommissioned")
+
+    async with db.execute(
+        "INSERT INTO commands (node_id, command_type, payload_json, created_by) VALUES (?,?,?,?)",
+        (node_id, body.command_type, json.dumps(body.payload), user["id"]),
+    ) as cur:
+        command_id = cur.lastrowid
+    await db.commit()
+    return {"id": command_id, "status": "pending"}

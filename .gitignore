@@ -1,0 +1,91 @@
+# ─── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+parts/
+var/
+sdist/
+develop-eggs/
+.installed.cfg
+lib64/
+.eggs/
+pip-wheel-metadata/
+share/python-wheels/
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# ─── Runtime / secrets ────────────────────────────────────────────────────────
+# real config (use config.example.yaml as template)
+config.yaml
+# SQLite databases
+*.db
+# DuckDB databases
+*.duckdb
+*.duckdb.wal
+
+# Log files
+*.log
+logs/
+
+# ─── SSH keys / credentials ───────────────────────────────────────────────────
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+.env
+.env.*
+!.env.example
+
+# ─── Node / frontend ──────────────────────────────────────────────────────────
+node_modules/
+# built output — produced by `npm run build` / install.sh
+frontend/dist/
+frontend/.vite/
+
+# ─── Go agent ─────────────────────────────────────────────────────────────────
+# built output — produced by agent/build.sh
+/agent-releases/
+agent/pktnode-agent
+agent/pktnode-agent.exe
+
+# ─── OS / editor ──────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ─── Test / coverage ──────────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ─── Deployment scripts (contain env-specific SSH keys/IPs) ──────────────────
+scripts/
+
+# ─── Claude project notes (deployment-specific) ───────────────────────────────
+CLAUDE.md
+
+# ─── Misc ─────────────────────────────────────────────────────────────────────
+*.bak
+*.orig
+# one-off repair script, not part of the codebase
+fix_truncated.py
+# Claude working artifact, not source
+todo_widget.html
