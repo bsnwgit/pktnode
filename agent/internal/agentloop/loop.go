@@ -84,7 +84,7 @@ func Run(stopCh <-chan struct{}) error {
 	iteration := 0
 	for {
 		fullInventory := iteration%15 == 0
-		checkinOnce(client, fullInventory)
+		checkinOnce(client, cfg, fullInventory)
 		iteration++
 
 		select {
@@ -95,12 +95,27 @@ func Run(stopCh <-chan struct{}) error {
 	}
 }
 
-func checkinOnce(client *apiclient.Client, fullInventory bool) {
+func checkinOnce(client *apiclient.Client, cfg *config.Config, fullInventory bool) {
 	snap := inventory.Collect(fullInventory)
 	resp, err := client.Checkin(snap)
+
+	status := &config.Status{
+		ServerURL:          cfg.ServerURL,
+		Hostname:           snap.Hostname,
+		CheckinIntervalSec: cfg.CheckinIntervalSec,
+		LastCheckinAt:      time.Now().UTC().Format(time.RFC3339),
+		LastCheckinOK:      err == nil,
+	}
 	if err != nil {
 		log.Printf("check-in failed: %v", err)
+		status.LastError = err.Error()
+		if saveErr := config.SaveStatus(status); saveErr != nil {
+			log.Printf("failed to write status file: %v", saveErr)
+		}
 		return
+	}
+	if saveErr := config.SaveStatus(status); saveErr != nil {
+		log.Printf("failed to write status file: %v", saveErr)
 	}
 
 	for _, cmd := range resp.Commands {
