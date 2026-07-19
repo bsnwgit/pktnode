@@ -73,6 +73,18 @@ func Collect(fullInventory bool) Snapshot {
 		snap.Processes = collectProcesses()
 	}
 
+	// The server's Pydantic model requires these fields to be JSON arrays,
+	// not null, even when empty — nil slices marshal to `null`.
+	if snap.Software == nil {
+		snap.Software = []SoftwareItem{}
+	}
+	if snap.Processes == nil {
+		snap.Processes = []ProcessItem{}
+	}
+	if snap.Interfaces == nil {
+		snap.Interfaces = []Interface{}
+	}
+
 	return snap
 }
 
