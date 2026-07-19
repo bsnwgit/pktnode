@@ -58,3 +58,13 @@ func Uninstall() error {
 	exec.Command("systemctl", "daemon-reload").Run()
 	return nil
 }
+
+// SelfStop asks systemd to stop this same service (Restart=always means a
+// plain process exit would just be relaunched — `systemctl stop` marks it
+// as intentionally stopped so that doesn't happen). Fire-and-forget: the
+// caller is expected to already be root and to have already written a
+// valid unlock grant, since systemd's SIGTERM to us is what the existing
+// signal handler checks that grant against.
+func SelfStop() {
+	exec.Command("systemctl", "stop", "pktnode-agent").Start()
+}

@@ -157,6 +157,25 @@ the target OS/arch (see `agent/build.sh` — not every target has one; cgo
 Linux box with GTK3/libappindicator3-dev, and Windows/arm64 has no
 readily available cgo cross-toolchain).
 
+**The tray and the agent are tied together, not independent.** There is
+no plain "quit the icon" option — the tray's **Stop Agent…** menu item
+prompts for the override code (see below) via a native OS dialog
+(`osascript`/PowerShell `InputBox`/`zenity`), and only ever *asks* the
+privileged agent process to verify it: the tray has no access to the
+root-owned secret and can't check a code itself. It drops the entered
+code into a shared, deliberately world-writable control file
+(`/tmp/pktnode-agent-control` on macOS/Linux, a loosened-ACL subfolder of
+`ProgramData\pktNodeAgent` on Windows); the agent polls that file every 2
+seconds, verifies the code the same offline way as the CLI, and — only if
+valid — asks the real OS service manager to stop itself for real (not
+just exit and get relaunched by `Restart=always`/`KeepAlive`). The tray
+then waits for the agent's own confirmation that it stopped before it
+quits itself, so the icon and the service go away together, not the icon
+alone. The same holds in the other direction: however the agent gets
+stopped (this flow, or the CLI's `unlock`+service-manager path below),
+the tray notices via a `stopped: true` flag in `status.json` on its next
+poll and exits itself in lockstep.
+
 ### Tamper lockout (override code)
 
 Stopping, restarting, or uninstalling the agent through the normal OS

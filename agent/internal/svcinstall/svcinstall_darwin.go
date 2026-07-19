@@ -60,3 +60,14 @@ func Uninstall() error {
 	exec.Command("launchctl", "bootout", "system/"+label).Run() // best-effort, ignore if not loaded
 	return os.Remove(plistPath())
 }
+
+// SelfStop asks launchd to stop this same service (KeepAlive=true means a
+// plain process exit would just be relaunched — bootout is the actual
+// "stop" a human would run). Fire-and-forget: the caller is expected to
+// already be root (this only ever runs inside the agent process itself,
+// which only runs as root) and to have already written a valid unlock
+// grant, since launchd's SIGTERM to us is what the existing signal
+// handler checks that grant against.
+func SelfStop() {
+	exec.Command("launchctl", "bootout", "system/"+label).Start()
+}

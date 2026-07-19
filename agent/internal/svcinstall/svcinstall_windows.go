@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 
+	"golang.org/x/sys/windows/svc"
 	"golang.org/x/sys/windows/svc/mgr"
 )
 
@@ -68,6 +69,24 @@ func uninstallLocked(m *mgr.Mgr) error {
 		return nil // not installed — nothing to do
 	}
 	defer s.Close()
-	_, _ = s.Control(1) // SERVICE_CONTROL_STOP, best-effort
+	_, _ = s.Control(svc.Stop) // best-effort
 	return s.Delete()
+}
+
+// SelfStop asks SCM to send this same service a stop control request —
+// our own svc.Handler.Execute checks for a valid unlock grant before
+// honoring svc.Stop (see internal/svcrun), so the caller here must have
+// already written one. Fire-and-forget, matching the Unix builds.
+func SelfStop() {
+	m, err := mgr.Connect()
+	if err != nil {
+		return
+	}
+	defer m.Disconnect()
+	s, err := m.OpenService(serviceName)
+	if err != nil {
+		return
+	}
+	defer s.Close()
+	_, _ = s.Control(svc.Stop)
 }
