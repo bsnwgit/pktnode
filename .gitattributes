@@ -1,0 +1,13 @@
+# Normalize all text files to LF on commit (deployed to Linux)
+* text=auto eol=lf
+
+# Explicitly binary — no line-ending conversion
+*.png binary
+*.ico binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.pdf binary
+*.pem binary
+*.db  binary
+*.duckdb binary
