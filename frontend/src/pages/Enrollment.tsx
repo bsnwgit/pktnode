@@ -3,7 +3,7 @@ import { api, EnrollmentToken } from '../api/client'
 import HelpButton from '../components/HelpButton'
 import { copyToClipboard } from '../utils/clipboard'
 
-function NewTokenModal({ onClose, onCreated }: { onClose: () => void; onCreated: (token: string) => void }) {
+function NewTokenModal({ onClose, onCreated }: { onClose: () => void; onCreated: (token: string, label: string) => void }) {
   const [label, setLabel]     = useState('')
   const [expiresDays, setExpiresDays] = useState<string>('')
   const [maxUses, setMaxUses] = useState<string>('')
@@ -18,7 +18,7 @@ function NewTokenModal({ onClose, onCreated }: { onClose: () => void; onCreated:
       if (expiresDays.trim()) body.expires_in_days = Number(expiresDays)
       if (maxUses.trim()) body.max_uses = Number(maxUses)
       const res = await api.createEnrollmentToken(body)
-      onCreated(res.token)
+      onCreated(res.token, label)
     } catch (e: any) {
       setError(e.message || 'Failed to create token')
     } finally {
@@ -105,7 +105,7 @@ export default function Enrollment() {
   const [tokens, setTokens]       = useState<EnrollmentToken[]>([])
   const [loading, setLoading]     = useState(true)
   const [showNew, setShowNew]     = useState(false)
-  const [newToken, setNewToken]   = useState<string | null>(null)
+  const [newToken, setNewToken]   = useState<{ token: string; label: string } | null>(null)
   const [confirmRevoke, setConfirmRevoke] = useState<EnrollmentToken | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<EnrollmentToken | null>(null)
 
@@ -132,7 +132,7 @@ export default function Enrollment() {
     setRotating(t.id)
     try {
       const res = await api.rotateEnrollmentToken(t.id)
-      setNewToken(res.token)
+      setNewToken({ token: res.token, label: t.label || `token #${t.id}` })
     } finally {
       setRotating(null)
     }
@@ -158,9 +158,9 @@ export default function Enrollment() {
       {newToken && (
         <div className="bg-blue-900/20 border border-blue-700/40 rounded-xl p-4 space-y-3">
           <p className="text-sm text-white">
-            Copy the install command below now — the raw token won't be shown again after you navigate away or dismiss this.
+            Install command for <span className="text-white font-semibold">{newToken.label}</span> — copy it now, the raw token won't be shown again after you navigate away or dismiss this.
           </p>
-          <InstallSnippet token={newToken} />
+          <InstallSnippet token={newToken.token} />
           <button onClick={() => setNewToken(null)} className="text-xs text-white hover:text-white underline">Dismiss</button>
         </div>
       )}
@@ -233,7 +233,7 @@ export default function Enrollment() {
       {showNew && (
         <NewTokenModal
           onClose={() => setShowNew(false)}
-          onCreated={(token) => { setShowNew(false); setNewToken(token); void load() }}
+          onCreated={(token, label) => { setShowNew(false); setNewToken({ token, label: label || 'new token (no label)' }); void load() }}
         />
       )}
 
