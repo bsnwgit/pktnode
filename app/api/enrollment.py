@@ -39,7 +39,7 @@ async def list_tokens(_: AdminUser, db: DbDep) -> list[dict]:
         """
         SELECT et.id, et.label, et.created_at, et.expires_at, et.max_uses,
                et.use_count, et.revoked, et.revoked_at, u.username AS created_by,
-               (SELECT COUNT(*) FROM nodes WHERE enrollment_token_id = et.id) AS nodes_enrolled
+               (SELECT COUNT(*) FROM nodes WHERE enrollment_token_id = et.id AND is_active = 1) AS nodes_enrolled
         FROM enrollment_tokens et
         LEFT JOIN users u ON u.id = et.created_by
         ORDER BY et.created_at DESC
