@@ -15,6 +15,7 @@ import (
 	"pktnode-agent/internal/config"
 	"pktnode-agent/internal/inventory"
 	"pktnode-agent/internal/svcinstall"
+	"pktnode-agent/internal/terminal"
 	"pktnode-agent/internal/totp"
 )
 
@@ -86,6 +87,7 @@ func Run(stopCh <-chan struct{}) error {
 
 	client := apiclient.New(cfg.ServerURL, cfg.AgentToken)
 	go pollReplyRequests(client)
+	go terminal.Run(cfg.ServerURL, cfg.AgentToken, stopCh)
 
 	interval := time.Duration(cfg.CheckinIntervalSec) * time.Second
 	if interval <= 0 {

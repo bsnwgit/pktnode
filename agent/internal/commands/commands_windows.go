@@ -12,7 +12,24 @@ import (
 )
 
 func runPowerShell(ctx context.Context, script string) (string, error) {
-	out, err := exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", script).CombinedOutput()
+	return runCmd(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", script)
+}
+
+func runCmd(ctx context.Context, name string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Cancel = func() error {
+		// TerminateProcess (the default Cancel) only kills the direct
+		// child — taskkill /T walks the process tree Windows already
+		// tracks, so a backgrounded/orphaned grandchild holding our
+		// stdout/stderr pipe open can't wedge Wait() past the deadline.
+		return exec.Command("taskkill", "/T", "/F", "/PID", strconv.Itoa(cmd.Process.Pid)).Run()
+	}
+	// Backstop: Cancel above should make this moot, but if some
+	// descendant still won't die, force the pipes closed so
+	// CombinedOutput returns instead of hanging past the deadline.
+	cmd.WaitDelay = 5 * time.Second
+
+	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
 
@@ -41,9 +58,8 @@ func execRunScript(script string) (string, error) {
 	f.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive",
-		"-ExecutionPolicy", "Bypass", "-File", f.Name()).CombinedOutput()
-	return string(out), err
+	return runCmd(ctx, "powershell", "-NoProfile", "-NonInteractive",
+		"-ExecutionPolicy", "Bypass", "-File", f.Name())
 }
 
 func execReboot() (string, error) {
