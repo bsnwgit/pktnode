@@ -9,12 +9,14 @@ import json
 from typing import Any, Optional
 
 import aiosqlite
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
 from app.database import get_db
 from app.dependencies import AdminUser, AnalystUser, CurrentUser, DbDep
 from app import totp
+from app.auth.local import decode_access_token
+from app.terminal_hub import hub
 
 router = APIRouter()
 
@@ -353,3 +355,48 @@ async def send_message(node_id: int, body: MessageIn, user: AnalystUser, db: DbD
         message_id = cur.lastrowid
     await db.commit()
     return {"id": message_id}
+
+
+# ── Live terminal ─────────────────────────────────────────────────────────
+#
+# The browser can't set a custom Authorization header on a WebSocket
+# handshake, so the JWT travels as a query param instead — see
+# app/terminal_hub.py for the rest of the wire protocol.
+
+@router.websocket("/{node_id}/terminal/ws")
+async def node_terminal_ws(websocket: WebSocket, node_id: int, db: DbDep, token: str = Query(...)) -> None:
+    payload = decode_access_token(token)
+    if not payload or payload.get("role") not in ("admin", "analyst"):
+        await websocket.close(code=4401)
+        return
+    async with db.execute("SELECT username FROM users WHERE id=? AND is_active=1", (payload["sub"],)) as cur:
+        user_row = await cur.fetchone()
+    if not user_row:
+        await websocket.close(code=4401)
+        return
+    async with db.execute("SELECT id FROM nodes WHERE id=? AND is_active=1", (node_id,)) as cur:
+        node_row = await cur.fetchone()
+    if not node_row:
+        await websocket.close(code=4404)
+        return
+
+    await websocket.accept()
+    agent, _browser, error = await hub.start_session(node_id, websocket, user_row["username"], cols=80, rows=24)
+    if error:
+        await websocket.send_text(json.dumps({"type": "status", "state": "error", "message": error}))
+        await websocket.close(code=4409)
+        return
+
+    await websocket.send_text(json.dumps({"type": "status", "state": "connecting"}))
+    try:
+        while True:
+            raw = await websocket.receive_text()
+            try:
+                msg = json.loads(raw)
+            except (ValueError, TypeError):
+                continue
+            await hub.handle_browser_message(agent, msg)
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await hub.stop_session(agent)

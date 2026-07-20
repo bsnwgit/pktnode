@@ -1,10 +1,13 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import clsx from 'clsx'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from 'recharts'
-import { api, NodeDetail as NodeDetailType, CommandRecord, NodeMessage } from '../api/client'
+import { Terminal as XTerm } from '@xterm/xterm'
+import { FitAddon } from '@xterm/addon-fit'
+import '@xterm/xterm/css/xterm.css'
+import { api, terminalWsUrl, NodeDetail as NodeDetailType, CommandRecord, NodeMessage } from '../api/client'
 import { useAuth } from '../store/auth'
 import HelpButton from '../components/HelpButton'
 
@@ -141,69 +144,248 @@ function MetricsChart({ history }: { history: NodeDetailType['metrics_history'] 
   )
 }
 
-function RunCommandModal({ onClose, onQueued }: { onClose: () => void; onQueued: (type: string, payload: Record<string, unknown>) => void }) {
-  const [type, setType] = useState('run_script')
+const isInFlight = (c: CommandRecord) => c.status === 'pending' || c.status === 'sent' || c.status === 'running'
+
+// Single popup for every direct command interaction with a node: fire an
+// action, and watch it move through pending -> sent -> completed/failed in
+// place, polling in the background — no more hunting the results table for
+// whether something you just queued actually landed. Opening it from a
+// history row seeds the transcript with that command instead of starting
+// blank, so it doubles as the read-only detail view too.
+function CommandConsoleModal({
+  nodeId, seed, onClose, onQueued,
+}: {
+  nodeId: number
+  seed: CommandRecord | null
+  onClose: () => void
+  onQueued: () => void
+}) {
+  const [entries, setEntries] = useState<CommandRecord[]>(seed ? [seed] : [])
+  const [type, setType] = useState('restart_service')
   const [serviceName, setServiceName] = useState('')
   const [pid, setPid] = useState('')
-  const [script, setScript] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState('')
 
-  const submit = (e: React.FormEvent) => {
+  // Poll while anything in this transcript is still in flight — commands
+  // only resolve on the node's own check-in cadence, so this is what makes
+  // "sent" turn into "completed" in front of you instead of requiring a
+  // manual refresh.
+  useEffect(() => {
+    if (!entries.some(isInFlight)) return
+    const poll = setInterval(async () => {
+      const fresh = await api.getNodeCommands(nodeId)
+      setEntries(prev => prev.map(e => fresh.find(f => f.id === e.id) || e))
+    }, 3000)
+    return () => clearInterval(poll)
+  }, [nodeId, entries])
+
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault()
     const payload: Record<string, unknown> =
       type === 'restart_service' ? { service: serviceName } :
-      type === 'kill_process'    ? { pid: parseInt(pid) || 0 } :
-      type === 'run_script'      ? { script } : {}
-    onQueued(type, payload)
+      type === 'kill_process'    ? { pid: parseInt(pid) || 0 } : {}
+    setSubmitting(true)
+    setError('')
+    try {
+      const queued = await api.queueCommand(nodeId, type, payload)
+      const fresh = await api.getNodeCommands(nodeId)
+      const full = fresh.find(f => f.id === queued.id)
+      if (full) setEntries(prev => [full, ...prev])
+      setServiceName(''); setPid('')
+      onQueued()
+    } catch (err: any) {
+      setError(err.message || 'Failed to queue command')
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={onClose}>
-      <div className="bg-gray-900 border border-gray-700 rounded-xl w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
-        <h2 className="text-lg font-semibold text-white mb-4">Run Remote Action</h2>
-        <form onSubmit={submit} className="space-y-4">
-          <div>
-            <label className="text-xs text-white block mb-1">Action</label>
+      <div className="bg-gray-900 border border-gray-700 rounded-xl w-full max-w-2xl max-h-[85vh] flex flex-col p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-1">
+          <h2 className="text-lg font-semibold text-white">Queue Command</h2>
+          <button onClick={onClose} className="text-sm text-white hover:text-white transition-colors">Close</button>
+        </div>
+        <p className="text-xs text-white mb-4">
+          Queues an action for the node's next check-in and keeps a logged history — not live. For an instant interactive shell, use Live Terminal instead.
+        </p>
+
+        <form onSubmit={submit} className="space-y-3 border-b border-gray-800 pb-4 mb-4">
+          <div className="flex gap-2">
             <select value={type} onChange={e => setType(e.target.value)}
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500">
-              <option value="run_script">Run command</option>
+              className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500">
               <option value="restart_service">Restart service</option>
               <option value="kill_process">Kill process</option>
               <option value="reboot">Reboot node</option>
               <option value="shutdown">Shutdown node</option>
             </select>
+            {type === 'restart_service' && (
+              <input value={serviceName} onChange={e => setServiceName(e.target.value)} required placeholder="Service name"
+                className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-blue-500" />
+            )}
+            {type === 'kill_process' && (
+              <input type="number" value={pid} onChange={e => setPid(e.target.value)} required placeholder="PID"
+                className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-blue-500" />
+            )}
           </div>
-          {type === 'restart_service' && (
-            <div>
-              <label className="text-xs text-white block mb-1">Service name</label>
-              <input value={serviceName} onChange={e => setServiceName(e.target.value)} required
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-blue-500" />
-            </div>
-          )}
-          {type === 'kill_process' && (
-            <div>
-              <label className="text-xs text-white block mb-1">PID</label>
-              <input type="number" value={pid} onChange={e => setPid(e.target.value)} required
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-blue-500" />
-            </div>
-          )}
-          {type === 'run_script' && (
-            <div>
-              <label className="text-xs text-white block mb-1">Command or script (shell on macOS/Linux, PowerShell on Windows)</label>
-              <textarea value={script} onChange={e => setScript(e.target.value)} required rows={6}
-                placeholder={'A single command (e.g. whoami) or a full multi-line script — anything the node\'s shell can run.'}
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white font-mono placeholder-gray-600 focus:outline-none focus:border-blue-500" />
-            </div>
-          )}
           {(type === 'reboot' || type === 'shutdown') && (
             <p className="text-xs text-amber-400 bg-amber-900/20 border border-amber-700/40 rounded-lg px-3 py-2">
               This will {type} the node the next time it checks in. Make sure that's intended.
             </p>
           )}
-          <div className="flex justify-end gap-3 pt-2">
-            <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-white hover:text-white transition-colors">Cancel</button>
-            <button type="submit" className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors">Queue Action</button>
+          {error && <p className="text-xs text-red-400">{error}</p>}
+          <div className="flex justify-end">
+            <button type="submit" disabled={submitting}
+              className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors disabled:opacity-50">
+              {submitting ? 'Queuing…' : 'Run'}
+            </button>
           </div>
         </form>
+
+        <div className="overflow-y-auto space-y-3 pr-1 flex-1">
+          {entries.length === 0 && (
+            <p className="text-sm text-white text-center py-6">Nothing run yet this session.</p>
+          )}
+          {entries.map(c => (
+            <div key={c.id} className="bg-gray-800/60 border border-gray-700 rounded-lg p-3">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-sm text-white font-mono">{c.command_type}</span>
+                <span className={`text-xs px-2 py-0.5 rounded-full ${COMMAND_STATUS_STYLES[c.status]}`}>
+                  {isInFlight(c) && <span className="inline-block w-1.5 h-1.5 rounded-full bg-current mr-1 animate-pulse align-middle" />}
+                  {c.status}
+                </span>
+              </div>
+              <p className="text-[10px] text-white mb-2">
+                Queued {fmtTime(c.created_at)}
+                {c.sent_at ? ` · sent ${fmtTime(c.sent_at)}` : ''}
+                {c.completed_at ? ` · done ${fmtTime(c.completed_at)}` : ''}
+                {c.exit_code !== null ? ` · exit ${c.exit_code}` : ''}
+                {c.created_by ? ` · by ${c.created_by}` : ''}
+              </p>
+              {Object.keys(c.payload || {}).length > 0 && (
+                <pre className="bg-gray-900 border border-gray-800 rounded-md px-2 py-1.5 text-xs text-white font-mono whitespace-pre-wrap break-words mb-2">
+                  {JSON.stringify(c.payload, null, 2)}
+                </pre>
+              )}
+              <pre className="bg-gray-900 border border-gray-800 rounded-md px-2 py-1.5 text-xs text-white font-mono whitespace-pre-wrap break-words min-h-[1.5rem]">
+                {c.result?.output || (isInFlight(c) ? "Waiting on the node's next check-in (this can take up to a minute)…" : '—')}
+              </pre>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = ''
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i])
+  return btoa(binary)
+}
+
+function base64ToBytes(b64: string): Uint8Array {
+  const binary = atob(b64)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+  return bytes
+}
+
+type TermState = 'connecting' | 'active' | 'exited' | 'error'
+
+// A real interactive shell on the node, not another queue-and-poll round
+// trip. The agent keeps an outbound WebSocket open the whole time it
+// runs (separate from its periodic check-in) purely so this can start
+// instantly instead of waiting on that interval — see
+// agent/internal/terminal/terminal.go and app/terminal_hub.py. The node
+// still never accepts an inbound connection of any kind.
+function LiveTerminalModal({ nodeId, hostname, onClose }: { nodeId: number; hostname: string; onClose: () => void }) {
+  const containerRef = useRef<HTMLDivElement | null>(null)
+  const termRef = useRef<XTerm | null>(null)
+  const fitRef = useRef<FitAddon | null>(null)
+  const wsRef = useRef<WebSocket | null>(null)
+  const [state, setState] = useState<TermState>('connecting')
+  const [message, setMessage] = useState('')
+
+  useEffect(() => {
+    if (!containerRef.current) return
+
+    const term = new XTerm({
+      cursorBlink: true,
+      fontSize: 13,
+      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+      theme: { background: '#111827' },
+    })
+    const fit = new FitAddon()
+    term.loadAddon(fit)
+    term.open(containerRef.current)
+    fit.fit()
+    termRef.current = term
+    fitRef.current = fit
+
+    const ws = new WebSocket(terminalWsUrl(nodeId))
+    wsRef.current = ws
+
+    ws.onmessage = (ev) => {
+      const msg = JSON.parse(ev.data)
+      if (msg.type === 'output') {
+        term.write(base64ToBytes(msg.data))
+      } else if (msg.type === 'status') {
+        setState(msg.state)
+        setMessage(msg.message || '')
+        if (msg.state === 'active') term.focus()
+      }
+    }
+    ws.onclose = () => {
+      setState(prev => (prev === 'active' ? 'exited' : prev))
+    }
+    ws.onerror = () => {
+      setState('error')
+      setMessage('Connection to the server failed.')
+    }
+
+    const dataDisposable = term.onData(data => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'input', data: bytesToBase64(new TextEncoder().encode(data)) }))
+      }
+    })
+    const resizeDisposable = term.onResize(({ cols, rows }) => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'resize', cols, rows }))
+      }
+    })
+
+    const resizeObserver = new ResizeObserver(() => fit.fit())
+    resizeObserver.observe(containerRef.current)
+
+    return () => {
+      resizeObserver.disconnect()
+      dataDisposable.dispose()
+      resizeDisposable.dispose()
+      ws.close()
+      term.dispose()
+    }
+  }, [nodeId])
+
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+      <div className="bg-gray-900 border border-gray-700 rounded-xl w-full max-w-4xl h-[80vh] flex flex-col p-4">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h2 className="text-lg font-semibold text-white">Live Terminal — {hostname}</h2>
+            {state !== 'active' && (
+              <p className={`text-xs mt-0.5 ${state === 'error' ? 'text-red-400' : 'text-white'}`}>
+                {state === 'connecting' && 'Connecting…'}
+                {state === 'exited' && (message || 'Session ended.')}
+                {state === 'error' && (message || 'Something went wrong.')}
+              </p>
+            )}
+          </div>
+          <button onClick={onClose} className="text-sm text-white hover:text-white transition-colors">Close</button>
+        </div>
+        <div ref={containerRef} className="flex-1 rounded-lg overflow-hidden bg-[#111827] p-2" />
       </div>
     </div>
   )
@@ -275,14 +457,16 @@ export default function NodeDetail() {
   const [page, setPage] = useState(1)
   const setTab = (t: Tab) => { setTabState(t); setSearch(''); setPage(1) }
   const [loading, setLoading] = useState(true)
-  const [showRunCommand, setShowRunCommand] = useState(false)
+  const [showConsole, setShowConsole] = useState(false)
+  const [showTerminal, setShowTerminal] = useState(false)
+  const [consoleSeed, setConsoleSeed] = useState<CommandRecord | null>(null)
+  const openConsole = (seed: CommandRecord | null) => { setConsoleSeed(seed); setShowConsole(true) }
   const [showOverrideCode, setShowOverrideCode] = useState(false)
   const [editingName, setEditingName] = useState(false)
   const [displayName, setDisplayName] = useState('')
   const [messages, setMessages] = useState<NodeMessage[]>([])
   const [newMessage, setNewMessage] = useState('')
   const [sendingMessage, setSendingMessage] = useState(false)
-  const [quickCommand, setQuickCommand] = useState('')
 
   const load = async () => {
     if (!id) return
@@ -352,16 +536,15 @@ export default function NodeDetail() {
     navigate('/nodes?status=decommissioned')
   }
 
-  const queueCommand = async (type: string, payload: Record<string, unknown>) => {
+  const refreshCommands = async () => {
     if (!id) return
-    await api.queueCommand(Number(id), type, payload)
-    setShowRunCommand(false)
     setCommands(await api.getNodeCommands(Number(id)))
   }
 
-  const killProcess = (pid: number, name: string) => {
-    if (!confirm(`Kill process "${name}" (PID ${pid})?\n\nThis runs the next time the node checks in. Killing the wrong process can crash apps or destabilize the machine — make sure that's intended.`)) return
-    queueCommand('kill_process', { pid })
+  const killProcess = async (pid: number, name: string) => {
+    if (!id || !confirm(`Kill process "${name}" (PID ${pid})?\n\nThis runs the next time the node checks in. Killing the wrong process can crash apps or destabilize the machine — make sure that's intended.`)) return
+    await api.queueCommand(Number(id), 'kill_process', { pid })
+    await refreshCommands()
   }
 
   if (loading || !node) {
@@ -420,9 +603,15 @@ export default function NodeDetail() {
         </div>
         {canAct && (
           <div className="flex items-center gap-2">
-            <button onClick={() => setShowRunCommand(true)}
+            <button onClick={() => setShowTerminal(true)}
+              title="Instant interactive shell — connects live, nothing is logged"
               className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors">
-              Run Remote Action
+              Live Terminal
+            </button>
+            <button onClick={() => openConsole(null)}
+              title="Queues an action for the node's next check-in — not live, kept in history"
+              className="px-4 py-2 text-sm bg-gray-800 hover:bg-gray-700 border border-gray-700 text-white rounded-lg transition-colors">
+              Queue Command
             </button>
             {user?.role === 'admin' && (
               <button onClick={() => setShowOverrideCode(true)}
@@ -640,27 +829,9 @@ export default function NodeDetail() {
 
       {tab === 'commands' && (
         <div className="space-y-3">
-          {canAct && (
-            <div className="bg-gray-900 border border-gray-800 rounded-xl p-3 flex items-end gap-2">
-              <div className="flex-1">
-                <label className="text-xs text-white block mb-1">Run a command — any command, not just the fixed actions below</label>
-                <input
-                  value={quickCommand}
-                  onChange={e => setQuickCommand(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter' && quickCommand.trim()) { queueCommand('run_script', { script: quickCommand.trim() }); setQuickCommand('') } }}
-                  placeholder="e.g. whoami, systemctl status nginx, Get-Process — runs on the node's next check-in"
-                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white font-mono placeholder-gray-600 focus:outline-none focus:border-blue-500"
-                />
-              </div>
-              <button
-                onClick={() => { if (quickCommand.trim()) { queueCommand('run_script', { script: quickCommand.trim() }); setQuickCommand('') } }}
-                disabled={!quickCommand.trim()}
-                className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors disabled:opacity-50"
-              >
-                Run
-              </button>
-            </div>
-          )}
+          <p className="text-xs text-white">
+            Queued, logged actions — use the Queue Command button above to add one, or Live Terminal for an instant interactive shell.
+          </p>
           <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
           {filteredCommands.length > 0 && (
             <div className="flex justify-center px-5 py-3 border-b border-gray-800">
@@ -679,7 +850,7 @@ export default function NodeDetail() {
             </thead>
             <tbody className="divide-y divide-gray-800/50">
               {pagedCommands.map(c => (
-                <tr key={c.id} className="hover:bg-gray-800/30 transition-colors">
+                <tr key={c.id} onClick={() => openConsole(c)} className="hover:bg-gray-800/30 transition-colors cursor-pointer">
                   <td className="px-5 py-2.5 text-white">{c.command_type}</td>
                   <td className="px-5 py-2.5"><span className={`text-xs px-2 py-0.5 rounded-full ${COMMAND_STATUS_STYLES[c.status]}`}>{c.status}</span></td>
                   <td className="px-5 py-2.5 text-white text-xs">{c.created_by || '—'}</td>
@@ -747,11 +918,23 @@ export default function NodeDetail() {
         </div>
       )}
 
-      {showRunCommand && (
-        <RunCommandModal onClose={() => setShowRunCommand(false)} onQueued={queueCommand} />
+      {showConsole && id && (
+        <CommandConsoleModal
+          nodeId={Number(id)}
+          seed={consoleSeed}
+          onClose={() => setShowConsole(false)}
+          onQueued={refreshCommands}
+        />
       )}
       {showOverrideCode && id && (
         <OverrideCodeModal nodeId={Number(id)} onClose={() => setShowOverrideCode(false)} />
+      )}
+      {showTerminal && id && (
+        <LiveTerminalModal
+          nodeId={Number(id)}
+          hostname={node.display_name || node.hostname}
+          onClose={() => setShowTerminal(false)}
+        />
       )}
     </div>
   )
