@@ -1,5 +1,9 @@
 # pktNode
 
+<p align="center">
+  <img src="lockup-256h.png" alt="pktNode" height="64">
+</p>
+
 RMM (remote monitoring & management) for the pkt suite — tracks and manages
 user-level assets (Mac/Windows/Linux endpoints) via a lightweight Go agent
 that enrolls with the server, checks in on an interval reporting hardware/
