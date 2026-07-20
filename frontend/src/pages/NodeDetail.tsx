@@ -672,46 +672,53 @@ export default function NodeDetail() {
       )}
 
       {tab === 'messages' && (
-        <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden flex flex-col" style={{ height: '32rem' }}>
-          <div className="flex-1 overflow-y-auto p-4 space-y-3">
-            {messages.length === 0 && (
-              <p className="text-sm text-white text-center py-8">
-                No messages yet. Messages are delivered on the node's next check-in — there's no live push, so replies can take a bit to show up here.
-              </p>
-            )}
-            {messages.map(m => (
-              <div key={m.id} className={`flex ${m.sender === 'admin' ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-[70%] rounded-xl px-3 py-2 ${
-                  m.sender === 'admin' ? 'bg-blue-600/30 border border-blue-700/40' : 'bg-gray-800 border border-gray-700'
-                }`}>
-                  <p className="text-sm text-white whitespace-pre-wrap break-words">{m.message}</p>
-                  <p className="text-[10px] text-white mt-1">
-                    {m.sender === 'admin' ? (m.created_by || 'admin') : 'user'} · {fmtTime(m.created_at)}
-                    {m.sender === 'admin' && !m.delivered_at && ' · queued'}
-                  </p>
-                </div>
-              </div>
-            ))}
-          </div>
-          {canAct && (
-            <div className="border-t border-gray-800 p-3 flex items-end gap-2">
-              <textarea
-                value={newMessage}
-                onChange={e => setNewMessage(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage() } }}
-                placeholder="Message the logged-in user… (delivered on next check-in)"
-                rows={2}
-                className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 resize-none focus:outline-none focus:border-blue-500"
-              />
-              <button
-                onClick={sendMessage}
-                disabled={sendingMessage || !newMessage.trim()}
-                className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors disabled:opacity-50"
-              >
-                Send
-              </button>
+        <div className="space-y-3">
+          {!node.has_tray && (
+            <div className="bg-amber-900/20 border border-amber-700/40 text-amber-300 text-sm rounded-xl px-4 py-3">
+              This node has no status-icon tray running — it's a CLI-only/headless system (or the tray isn't installed) with no way to show a message to anyone. Sending is disabled.
             </div>
           )}
+          <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden flex flex-col" style={{ height: '32rem' }}>
+            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+              {messages.length === 0 && (
+                <p className="text-sm text-white text-center py-8">
+                  No messages yet. Messages are delivered on the node's next check-in — there's no live push, so replies can take a bit to show up here.
+                </p>
+              )}
+              {messages.map(m => (
+                <div key={m.id} className={`flex ${m.sender === 'admin' ? 'justify-end' : 'justify-start'}`}>
+                  <div className={`max-w-[70%] rounded-xl px-3 py-2 ${
+                    m.sender === 'admin' ? 'bg-blue-600/30 border border-blue-700/40' : 'bg-gray-800 border border-gray-700'
+                  }`}>
+                    <p className="text-sm text-white whitespace-pre-wrap break-words">{m.message}</p>
+                    <p className="text-[10px] text-white mt-1">
+                      {m.sender === 'admin' ? (m.created_by || 'admin') : 'user'} · {fmtTime(m.created_at)}
+                      {m.sender === 'admin' && !m.delivered_at && ' · queued'}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+            {canAct && node.has_tray && (
+              <div className="border-t border-gray-800 p-3 flex items-end gap-2">
+                <textarea
+                  value={newMessage}
+                  onChange={e => setNewMessage(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage() } }}
+                  placeholder="Message the logged-in user… (delivered on next check-in)"
+                  rows={2}
+                  className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 resize-none focus:outline-none focus:border-blue-500"
+                />
+                <button
+                  onClick={sendMessage}
+                  disabled={sendingMessage || !newMessage.trim()}
+                  className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors disabled:opacity-50"
+                >
+                  Send
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       )}
 

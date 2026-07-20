@@ -212,6 +212,8 @@ class CheckinRequest(BaseModel):
     processes: list[ProcessItem] = []
     interfaces: list[InterfaceItem] = []
 
+    has_tray: bool = False
+
 
 @router.post("/checkin")
 async def checkin(body: CheckinRequest, node: CurrentNode, db: DbDep) -> dict:
@@ -225,7 +227,7 @@ async def checkin(body: CheckinRequest, node: CurrentNode, db: DbDep) -> dict:
         "memory_total_mb": body.memory_total_mb, "disk_total_gb": body.disk_total_gb,
         "disk_free_gb": body.disk_free_gb, "uptime_seconds": body.uptime_seconds,
         "timezone": body.timezone, "domain_or_workgroup": body.domain_or_workgroup,
-        "current_user": body.current_user,
+        "current_user": body.current_user, "has_tray": body.has_tray,
     }
     set_clauses = [f"{k}=?" for k, v in fields.items() if v is not None]
     values = [v for v in fields.values() if v is not None]
