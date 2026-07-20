@@ -142,7 +142,7 @@ function MetricsChart({ history }: { history: NodeDetailType['metrics_history'] 
 }
 
 function RunCommandModal({ onClose, onQueued }: { onClose: () => void; onQueued: (type: string, payload: Record<string, unknown>) => void }) {
-  const [type, setType] = useState('restart_service')
+  const [type, setType] = useState('run_script')
   const [serviceName, setServiceName] = useState('')
   const [pid, setPid] = useState('')
   const [script, setScript] = useState('')
@@ -165,9 +165,9 @@ function RunCommandModal({ onClose, onQueued }: { onClose: () => void; onQueued:
             <label className="text-xs text-white block mb-1">Action</label>
             <select value={type} onChange={e => setType(e.target.value)}
               className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500">
+              <option value="run_script">Run command</option>
               <option value="restart_service">Restart service</option>
               <option value="kill_process">Kill process</option>
-              <option value="run_script">Run script</option>
               <option value="reboot">Reboot node</option>
               <option value="shutdown">Shutdown node</option>
             </select>
@@ -188,9 +188,10 @@ function RunCommandModal({ onClose, onQueued }: { onClose: () => void; onQueued:
           )}
           {type === 'run_script' && (
             <div>
-              <label className="text-xs text-white block mb-1">Script (shell/PowerShell depending on node OS)</label>
+              <label className="text-xs text-white block mb-1">Command or script (shell on macOS/Linux, PowerShell on Windows)</label>
               <textarea value={script} onChange={e => setScript(e.target.value)} required rows={6}
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-blue-500" />
+                placeholder={'A single command (e.g. whoami) or a full multi-line script — anything the node\'s shell can run.'}
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white font-mono placeholder-gray-600 focus:outline-none focus:border-blue-500" />
             </div>
           )}
           {(type === 'reboot' || type === 'shutdown') && (
@@ -281,6 +282,7 @@ export default function NodeDetail() {
   const [messages, setMessages] = useState<NodeMessage[]>([])
   const [newMessage, setNewMessage] = useState('')
   const [sendingMessage, setSendingMessage] = useState(false)
+  const [quickCommand, setQuickCommand] = useState('')
 
   const load = async () => {
     if (!id) return
@@ -637,7 +639,29 @@ export default function NodeDetail() {
       )}
 
       {tab === 'commands' && (
-        <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+        <div className="space-y-3">
+          {canAct && (
+            <div className="bg-gray-900 border border-gray-800 rounded-xl p-3 flex items-end gap-2">
+              <div className="flex-1">
+                <label className="text-xs text-white block mb-1">Run a command — any command, not just the fixed actions below</label>
+                <input
+                  value={quickCommand}
+                  onChange={e => setQuickCommand(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter' && quickCommand.trim()) { queueCommand('run_script', { script: quickCommand.trim() }); setQuickCommand('') } }}
+                  placeholder="e.g. whoami, systemctl status nginx, Get-Process — runs on the node's next check-in"
+                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white font-mono placeholder-gray-600 focus:outline-none focus:border-blue-500"
+                />
+              </div>
+              <button
+                onClick={() => { if (quickCommand.trim()) { queueCommand('run_script', { script: quickCommand.trim() }); setQuickCommand('') } }}
+                disabled={!quickCommand.trim()}
+                className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors disabled:opacity-50"
+              >
+                Run
+              </button>
+            </div>
+          )}
+          <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
           {filteredCommands.length > 0 && (
             <div className="flex justify-center px-5 py-3 border-b border-gray-800">
               <Pagination page={page} totalPages={totalPages} onChange={setPage} />
@@ -668,6 +692,7 @@ export default function NodeDetail() {
               )}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 
