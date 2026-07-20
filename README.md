@@ -3,8 +3,10 @@
 RMM (remote monitoring & management) for the pkt suite — tracks and manages
 user-level assets (Mac/Windows/Linux endpoints) via a lightweight Go agent
 that enrolls with the server, checks in on an interval reporting hardware/
-software inventory and live resource usage, and executes queued remote
-actions (service restarts, script execution, reboot/shutdown).
+software inventory and live resource usage, executes queued remote actions
+(service restarts, reboot/shutdown), opens an instant interactive shell on
+a node (Live Terminal), and relays a simple 2-way chat between an admin and
+whoever's logged into the machine (via a tray/menu-bar helper).
 
 **Default port:** `8764` (HTTP)
 
@@ -15,6 +17,7 @@ actions (service restarts, script execution, reboot/shutdown).
 - [Architecture](#architecture)
 - [Requirements](#requirements)
 - [Installation](#installation)
+- [Using pktNode](#using-pktnode)
 - [Agent](#agent)
 - [Frontend Build & Deploy](#frontend-build--deploy)
 - [Configuration Reference](#configuration-reference)
@@ -48,7 +51,15 @@ appends a metrics-history sample, and (on a full-inventory check-in, every
 `commands` rows queued for that node with `status='pending'` are handed
 back in the response and flipped to `status='sent'`; the agent executes
 each one and reports the result via
-`POST /api/agent/commands/{id}/result`.
+`POST /api/agent/commands/{id}/result`. Pending admin→agent chat messages
+are handed back and flipped to delivered the same way (see
+[Messaging](#messaging-tray-chat)).
+
+Separately from that polling loop, the agent also keeps one persistent
+outbound WebSocket open to `/api/agent/terminal/ws` for its whole run — a
+control channel used only for [Live Terminal](#live-terminal) sessions,
+relayed through the in-memory `app/terminal_hub.py` registry to whichever
+admin browser opened a matching `/api/nodes/{id}/terminal/ws` connection.
 
 ## Requirements
 
@@ -80,6 +91,52 @@ The installer builds the frontend and the agent binaries automatically if
 `npm`/`go` are present on the install machine; if not, it prints the exact
 commands to run manually afterward (see the end-of-run banner).
 
+## Using pktNode
+
+A quick tour for day-to-day operators (admin/analyst), once the server is up
+and at least one node is enrolled — see [Agent](#agent) below for enrollment
+itself.
+
+- **Dashboard** (`/`) — total/online/offline/stale/pending node counts and
+  active-alert count as clickable tiles (each jumps to the filtered Nodes
+  or Alerts view), plus a "recently seen" table of the 10 most recently
+  checked-in nodes.
+- **Nodes** (`/nodes`) — the full inventory list. Filter by status
+  (All/Online/Offline/Stale/Pending/Decommissioned), search by hostname, and
+  (admin/analyst) multi-select rows with the checkbox column to **bulk
+  reboot or shut down** several nodes at once — each queues a `reboot`/
+  `shutdown` command per selected node, applied on that node's next
+  check-in, same as the single-node action.
+- **Node detail** (`/nodes/{id}`) — tabs for Overview (hardware, IP, current
+  user, network interfaces), Software (installed-package inventory),
+  Processes (running-process snapshot, with a per-row **Kill** action),
+  Metrics (CPU/mem/disk history chart + table), Commands (remote-action
+  history), and Messages (tray chat, see below). Admin/analyst get two
+  action buttons at the top:
+  - **Live Terminal** — an instant, interactive shell on the node (see
+    [Live Terminal](#live-terminal) below) — nothing queued, nothing logged.
+  - **Queue Command** — opens a console-style modal to fire a fixed remote
+    action (**Restart service**, **Kill process**, **Reboot node**,
+    **Shutdown node**) and watch it move from `pending` → `sent` →
+    `completed`/`failed` live, without leaving the modal. Every queued
+    command is also logged in the Commands tab, and clicking a past row
+    reopens the modal seeded with that command's transcript. See
+    [Remote actions](#remote-actions) for exactly what each type does and
+    its current caveats.
+  - Admins additionally get **Override Code** (the live TOTP code for
+    locally stopping/uninstalling the agent — see
+    [Tamper lockout](#tamper-lockout-override-code)) and
+    **Decommission & Revoke** / **Delete Permanently**.
+- **Messaging a node** — the Messages tab is a simple chat thread with
+  whoever is logged into that node, delivered through the tray helper (see
+  [Messaging](#messaging-tray-chat) below). **Nodes with no tray helper
+  running can't be messaged at all** — the tab shows a warning banner and
+  hides the send box, and the server rejects the send outright, not just
+  the UI.
+- **Enrollment** (`/enrollment`, admin only) — its own top-level nav item,
+  not under Settings — issue and manage enrollment tokens (see
+  [Enrolling a node](#enrolling-a-node)).
+
 ## Agent
 
 ### Building
@@ -96,9 +153,13 @@ installer scripts to download.
 
 ### Enrolling a node
 
-1. In the UI: **Settings → Enrollment** (admin only) → **New Token**.
-   Optionally set a label, an expiry, and a max-use count (1 for a
-   single-machine install, unlimited for a shared rollout token).
+1. In the UI: **Enrollment** (its own top-level nav item, admin only) →
+   **New Token**. Optionally set a label, an expiry, and a max-use count (1
+   for a single-machine install, unlimited for a shared rollout token).
+   Tokens are split into **Active**/**Revoked** tabs; the raw token string
+   is only ever shown once, but **Get Install Command** on a token's row
+   generates a fresh one for the same token (same label/limits, use count
+   reset) if you navigated away before copying it.
 2. Copy the generated install command for the target OS and run it on the
    machine:
 
@@ -136,11 +197,58 @@ network interfaces — replaced wholesale each time, not appended to history.
 
 ### Remote actions
 
-From a node's detail page, admins/analysts can queue: `restart_service`,
-`kill_process`, `run_script` (shell on macOS/Linux, PowerShell on Windows),
-`reboot`, `shutdown`. Commands are picked up on the node's next check-in
-(so latency is bounded by the check-in interval, not instant) and results
-are visible in the node's Commands tab.
+From a node's detail page (**Queue Command**) or in bulk from the Nodes
+list (multi-select → Reboot/Shut Down), admins/analysts can queue:
+`restart_service`, `kill_process`, `reboot`, `shutdown`. Commands are
+picked up on the node's next check-in (so latency is bounded by the
+check-in interval, not instant — up to a minute is normal) and results
+are visible in the node's Commands tab, or live in the Queue Command modal
+while a command you just fired is still in flight.
+
+The server API also still accepts a `run_script` command type (shell on
+macOS/Linux, PowerShell on Windows) and the agent still executes it — but
+it is **not currently exposed as an option in the Queue Command modal**.
+For one-off/ad-hoc commands today, use [Live Terminal](#live-terminal)
+instead, which is interactive and instant rather than queued.
+
+### Live Terminal
+
+A real interactive shell on the node, opened from the **Live Terminal**
+button on a node's detail page — not another queue-and-poll round trip.
+Separately from its periodic HTTP check-in, the agent keeps one
+persistent outbound WebSocket open to the server the whole time it runs
+(a control channel — see `agent/internal/terminal/terminal.go` and
+`app/terminal_hub.py` for the wire protocol); an admin's browser opens a
+second WebSocket to the server, which relays JSON-framed input/output
+frames between the two. The node still never accepts an inbound
+connection of any kind — the agent always dials out, so no firewall
+changes are needed on the managed machine's end.
+
+A second admin opening a terminal on the same node preempts (not queues
+behind) any existing session — the older tab is told "Another admin
+started a new terminal session on this node" and closed. If the node has
+no live control-channel connection (agent offline, or an older agent
+build that predates this feature), the button reports that plainly
+instead of hanging.
+
+### Messaging (tray chat)
+
+A simple 2-way chat between an admin and whoever is logged into the node,
+from the node detail page's **Messages** tab. Admin → agent messages are
+handed to the agent on its next check-in and shown as a native OS dialog
+by the tray helper (see below); a reply typed into that dialog is relayed
+back the same way check-in results are, and shows up in the Messages tab
+on the admin's next poll (it refreshes every 10s while that tab is open).
+There is no live push in either direction — delivery in both directions
+is bounded by the check-in interval.
+
+**A node with no tray helper running can't be messaged, period** — the
+agent reports `has_tray` on every check-in (always `false` on headless
+Linux, and on Linux in general until a tray build ships — see
+[Status icon](#status-icon-tray-helper)). The Messages tab shows a
+warning banner and hides the send box for such a node, and
+`POST /api/nodes/{id}/messages` rejects the send server-side too, so this
+isn't just a frontend nicety.
 
 ### Status icon (tray helper)
 
@@ -156,6 +264,15 @@ the target OS/arch (see `agent/build.sh` — not every target has one; cgo
 + a native GUI toolkit is required, so Linux needs building natively on a
 Linux box with GTK3/libappindicator3-dev, and Windows/arm64 has no
 readily available cgo cross-toolchain).
+
+The menu itself is deliberately minimal: a disabled status line
+(online/checking-in-failing + relative last-check-in time), a disabled
+line showing the configured server URL, and **Stop Agent…**. There is no
+"Open pktNode" item — regular users on a node don't get a shortcut to the
+admin web UI from here. When an admin sends this node a message (see
+[Messaging](#messaging-tray-chat)), the tray shows it as a native OS
+dialog (`osascript`/PowerShell `InputBox`/`zenity`) with a free-text reply
+field, one message at a time.
 
 **The tray and the agent are tied together, not independent.** There is
 no plain "quit the icon" option — the tray's **Stop Agent…** menu item
@@ -217,9 +334,21 @@ See `config.example.yaml` — covers server bind host/port, install_dir,
 JWT secret, CORS origins, node liveness thresholds
 (`offline_after_sec`/`stale_after_sec`), logging, and SSL cert paths.
 Everything else (notifications, alert thresholds, SSL toggle, suite
-integration token, AI assistant key, backup schedule, enrollment tokens)
-lives in the SQLite `settings`/`enrollment_tokens` tables and is managed
-from the Settings page — not this file.
+integration token, AI assistant key, backup schedule, enrollment tokens,
+agent check-in interval) lives in the SQLite `settings`/`enrollment_tokens`
+tables and is managed from the Settings page — not this file.
+
+**Agent check-in interval** (Settings → General, default 60s, 15–3600s
+range) controls how often every node calls home — it's also the floor on
+how fast a queued remote action or a chat message can reach a node.
+**Caveat as currently implemented**: this only takes effect for agents
+enrolling *after* the change. An agent already running keeps the interval
+it received at its own enroll time — the check-in response does carry the
+current setting back on every check-in, but the agent loop doesn't yet
+apply it to a process that's already running, and restarting the agent
+service doesn't re-fetch it either (it reloads the same value from its
+local config file). Re-enrolling a node is currently the only way to pick
+up a changed interval on an existing install.
 
 ## Running & Managing the Service
 
@@ -305,17 +434,21 @@ go run . install --server http://localhost:8764 --token <enrollment-token>
   uninstall keys on Windows) — best-effort, not exhaustive on every distro
   (notably Alpine/apk isn't handled on Linux).
 - No patch/update-management surface yet (OS or third-party).
-- No remote screen/shell session — remote actions are fire-and-forget
-  script/service/power commands, not interactive.
-- `run_script` results truncate very long output; there's no streaming
-  output for long-running scripts.
+- Queued remote actions (Queue Command / bulk Reboot/Shut Down) are still
+  fire-and-forget, not interactive — use Live Terminal for anything that
+  needs a live session. `run_script` still works at the API level but
+  isn't exposed as a Queue Command option in the current UI.
 - No tray/status-icon build for Linux (needs GTK3/libappindicator3-dev,
   build natively on Linux) or Windows/arm64 (no readily available cgo
-  cross-toolchain for it).
-- No two-way messenger/chat between an admin and the logged-in user —
-  considered and deliberately deferred; the tray helper has no real GUI
-  toolkit today (just tray menu + one-shot native OS dialogs), and a
-  persistent chat window would need one added (e.g. Fyne/Wails) first.
+  cross-toolchain for it) — which also means no tray chat and no
+  messaging support on those targets (see [Messaging](#messaging-tray-chat)).
+- Messaging is a single OS dialog at a time (native `osascript`/`InputBox`/
+  `zenity`, not a persistent chat window) — fine for short exchanges, not
+  a real chat UI.
+- Changing the agent check-in interval in Settings doesn't propagate to
+  already-running agents — see the caveat in
+  [Configuration Reference](#configuration-reference); only newly-enrolled
+  agents pick up a changed value.
 - Tamper lockout is userland-only by design (see the "Tamper lockout"
   section above) — no kernel-level enforcement, so a local admin/root can
   always force-kill the process.
