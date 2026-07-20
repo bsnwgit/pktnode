@@ -561,7 +561,7 @@ export default function Settings() {
     setGeneralSaving(true); setGeneralSaved(false); setGeneralError('')
     try {
       const subset: Settings = {}
-      for (const k of ['app_name', 'base_url', 'timezone']) if (k in settings) subset[k] = settings[k]
+      for (const k of ['app_name', 'base_url', 'timezone', 'agent_checkin_interval_sec']) if (k in settings) subset[k] = settings[k]
       await api.bulkUpdateSettings(subset)
       await api.setPort(portValue)
       await load()
@@ -727,6 +727,7 @@ export default function Settings() {
             content: <>
               <p><span className="text-gray-300 font-medium">Base URL</span> feeds the SAML ACS/metadata URLs on the Auth tab and any links posted in Slack/Email/webhook notifications — set it to the actual externally-reachable address before configuring SSO or notifications, or those will point at the wrong place.</p>
               <p><span className="text-gray-300 font-medium">Port</span> only takes effect after a restart. Changing it moves the app to a new URL; the browser won't follow automatically.</p>
+              <p><span className="text-gray-300 font-medium">Check-in interval</span> applies node-by-node as each one checks in — a node picks up the new interval on its next check-in (using its old one), then uses the new interval from then on. There's no live push, so this is also the floor on how fast a queued command, reboot/shutdown, or chat message can possibly reach a node.</p>
             </>,
           }}
         >
@@ -749,6 +750,12 @@ export default function Settings() {
           <PortField value={portValue} onChange={setPortValue} loaded={portLoaded} />
           <Field label="Base URL" hint="Used for redirect URIs and notification links">
             <TextInput value={str('base_url')} onChange={v => set('base_url', v)} placeholder="http://SERVER-IP:8767" />
+          </Field>
+          <Field label="Check-in interval" hint="How often nodes call home — also how quickly a queued command, reboot/shutdown, or message reaches a node. Lower = faster delivery but more load and network chatter across every enrolled node.">
+            <div className="flex items-center gap-3">
+              <NumberInput value={num('agent_checkin_interval_sec', 60)} onChange={v => set('agent_checkin_interval_sec', v)} min={15} max={3600} />
+              <span className="text-sm text-white">seconds</span>
+            </div>
           </Field>
           <RestartServiceRow />
         </Section>
