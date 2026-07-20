@@ -107,6 +107,7 @@ async def get_node(node_id: int, _: CurrentUser, db: DbDep) -> dict:
     if not row:
         raise HTTPException(status_code=404, detail="Node not found")
     node = dict(row)
+    node["has_tray"] = bool(node["has_tray"])
     try:
         node["tags"] = json.loads(node.pop("tags_json"))
     except Exception:
@@ -338,10 +339,12 @@ async def list_messages(node_id: int, _: CurrentUser, db: DbDep) -> list[dict]:
 async def send_message(node_id: int, body: MessageIn, user: AnalystUser, db: DbDep) -> dict:
     if not body.message.strip():
         raise HTTPException(status_code=400, detail="message is required")
-    async with db.execute("SELECT id FROM nodes WHERE id=? AND is_active=1", (node_id,)) as cur:
+    async with db.execute("SELECT id, has_tray FROM nodes WHERE id=? AND is_active=1", (node_id,)) as cur:
         row = await cur.fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="Node not found or decommissioned")
+    if not row[1]:
+        raise HTTPException(status_code=400, detail="This node has no tray helper running — there's no way to show it a message")
 
     async with db.execute(
         "INSERT INTO node_messages (node_id, sender, message, created_by) VALUES (?, 'admin', ?, ?)",

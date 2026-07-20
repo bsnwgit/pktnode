@@ -409,6 +409,7 @@ export interface NodeDetail extends NodeSummary {
   processes: NodeProcess[]
   interfaces: NodeInterface[]
   metrics_history: NodeMetricPoint[]
+  has_tray: boolean
 }
 
 export interface CommandRecord {
