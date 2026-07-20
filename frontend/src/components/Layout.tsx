@@ -150,9 +150,9 @@ export default function Layout({ children }: { children: ReactNode }) {
     <AutoRefreshProvider>
     <div className="flex h-screen bg-gray-950 text-white overflow-hidden">
       <aside className="w-52 flex-shrink-0 bg-gray-900 border-r border-gray-800 flex flex-col">
-        <div className="flex items-center gap-2 px-3 py-3 border-b border-gray-800">
-          <img src="/icon-32.png" alt="" className="w-6 h-6 rounded-md" />
-          <span className="text-sm font-semibold tracking-wide text-white">pktNode</span>
+        <div className="flex items-center gap-3 px-3 py-3 border-b border-gray-800">
+          <img src="/icon-128.png" alt="" className="w-12 h-12 rounded-md" />
+          <span className="text-xl font-bold tracking-wide text-white">pktNode</span>
         </div>
 
         <nav className="flex-1 px-2 py-4 space-y-0.5">

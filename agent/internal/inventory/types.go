@@ -27,6 +27,12 @@ type Snapshot struct {
 	Software      []SoftwareItem `json:"software"`
 	Processes     []ProcessItem  `json:"processes"`
 	Interfaces    []Interface    `json:"interfaces"`
+
+	// HasTray is set by the caller (agentloop), not Collect itself —
+	// inventory doesn't import svcinstall. True only if the status-icon
+	// helper is actually installed on this machine (false on headless
+	// Linux by design, and on Linux generally until a tray build ships).
+	HasTray bool `json:"has_tray"`
 }
 
 type SoftwareItem struct {

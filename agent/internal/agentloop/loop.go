@@ -172,6 +172,7 @@ func markStopped(cfg *config.Config) {
 
 func checkinOnce(client *apiclient.Client, cfg *config.Config, fullInventory bool) {
 	snap := inventory.Collect(fullInventory)
+	snap.HasTray = svcinstall.TrayInstalled()
 	resp, err := client.Checkin(snap)
 
 	status := &config.Status{
