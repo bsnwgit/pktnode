@@ -18,12 +18,13 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import aiosqlite
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
 from app.database import get_db
 from app.dependencies import CurrentNode, DbDep, hash_agent_token
 from app import totp
+from app.terminal_hub import hub, AgentLink
 
 log = logging.getLogger("pktnode.agent")
 router = APIRouter()
@@ -352,3 +353,54 @@ async def report_command_result(
     )
     await db.commit()
     return {"ok": True}
+
+
+# ── Live terminal control channel ────────────────────────────────────────────
+#
+# Kept open by the agent for its whole run, separate from the periodic
+# check-in — see app/terminal_hub.py for the wire protocol and why this
+# needs no inbound port on the node.
+
+@router.websocket("/terminal/ws")
+async def agent_terminal_ws(websocket: WebSocket, db: DbDep) -> None:
+    auth = websocket.headers.get("authorization", "")
+    if not auth.startswith("Bearer "):
+        await websocket.close(code=4401)
+        return
+    token_hash = _hash_token(auth[7:])
+    async with db.execute(
+        """
+        SELECT n.id, n.hostname FROM agent_tokens t
+        JOIN nodes n ON n.id = t.node_id
+        WHERE t.token_hash = ? AND t.revoked = 0 AND n.is_active = 1
+        """,
+        (token_hash,),
+    ) as cur:
+        node = await cur.fetchone()
+    if not node:
+        await websocket.close(code=4401)
+        return
+
+    await websocket.accept()
+    link = AgentLink(websocket, node["id"], node["hostname"])
+    hub.register_agent(link)
+    log.info(f"terminal control channel connected for node {node['id']} ({node['hostname']})")
+    try:
+        while True:
+            raw = await websocket.receive_text()
+            try:
+                msg = json.loads(raw)
+            except (ValueError, TypeError):
+                continue
+            await hub.handle_agent_message(link, msg)
+    except WebSocketDisconnect:
+        pass
+    finally:
+        if link.browser is not None:
+            try:
+                await link.browser.send({"type": "status", "state": "exited", "message": "Agent disconnected."})
+                await link.browser.ws.close()
+            except Exception:
+                pass
+        hub.unregister_agent(link)
+        log.info(f"terminal control channel disconnected for node {node['id']} ({node['hostname']})")

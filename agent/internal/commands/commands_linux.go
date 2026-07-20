@@ -7,11 +7,26 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"syscall"
 	"time"
 )
 
 func runCmd(ctx context.Context, name string, args ...string) (string, error) {
-	out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
+	cmd := exec.CommandContext(ctx, name, args...)
+	// Its own process group, so a script that backgrounds a subprocess
+	// (or invokes something that never exits on its own, e.g. a bare
+	// `ping` with no -c) can be reaped in full on timeout instead of
+	// leaving an orphan holding our stdout/stderr pipe open forever.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
+	// Backstop: Cancel above should make this moot, but if some
+	// descendant still won't die, force the pipes closed so
+	// CombinedOutput returns instead of hanging past the deadline.
+	cmd.WaitDelay = 5 * time.Second
+
+	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
 
