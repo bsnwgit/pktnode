@@ -217,7 +217,7 @@ export default function Enrollment() {
                     {!t.revoked && (
                       <button onClick={() => setConfirmRevoke(t)} className="text-xs text-white hover:text-red-400 transition-colors">Revoke</button>
                     )}
-                    {t.revoked && (
+                    {Boolean(t.revoked) && (
                       <button onClick={() => setConfirmDelete(t)} className="text-xs text-white hover:text-red-400 transition-colors">Delete</button>
                     )}
                   </td>
