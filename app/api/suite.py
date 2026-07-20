@@ -9,11 +9,17 @@ Token flow (new):
 
 GET  /api/suite/token    — returns current token (generates one if not set)
 POST /api/suite/register — stores a new token (manual override)
+GET  /api/suite/whoami   — authenticated identity check; a sibling pkt* app's
+                           "Test Connection" button calls this (not the public
+                           /api/health) so a wrong/revoked token fails the test
+                           instead of silently reporting a healthy connection.
 """
 import json
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
+
+from app.dependencies import CurrentUser
 
 router = APIRouter()
 
@@ -96,3 +102,17 @@ async def regenerate_suite_token(request: Request):
         return JSONResponse({"suite_token": new_token, "status": "regenerated"})
     except Exception as exc:
         return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@router.get("/whoami")
+async def suite_whoami(user: CurrentUser):
+    """
+    Requires a valid X-Suite-Token (or a normal session) — used by callers to
+    prove they can actually authenticate here, not just reach the port.
+    """
+    return {
+        "authenticated": True,
+        "app": "pktnode",
+        "via_suite_token": bool(user.get("_via_suite")),
+        "role": user["role"],
+    }

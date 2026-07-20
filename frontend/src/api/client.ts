@@ -83,6 +83,15 @@ function authHeaders(): Record<string, string> {
   return headers
 }
 
+// Browser WebSocket connections can't set an Authorization header, so the
+// JWT travels as a query param instead (see app/api/nodes.py's terminal
+// WS route) — same-origin as the REST API, just over ws(s):// instead of
+// http(s)://.
+export function terminalWsUrl(nodeId: number): string {
+  const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws'
+  return `${scheme}://${window.location.host}/api/nodes/${nodeId}/terminal/ws?token=${encodeURIComponent(_accessToken || '')}`
+}
+
 export const api = {
   // ── Auth ──────────────────────────────────────────────────────────────────
   // Deliberately bypasses request() — a bad password here is a normal login
