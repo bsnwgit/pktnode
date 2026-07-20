@@ -136,29 +136,39 @@ export default function Nodes() {
               {nodes.map(n => (
                 <tr
                   key={n.id}
-                  className="hover:bg-gray-800/30 transition-colors"
+                  className="hover:bg-gray-800/30 transition-colors cursor-pointer"
+                  onClick={e => {
+                    // Ctrl-click is how a Mac trackpad/mouse fires a
+                    // secondary click — Safari dispatches both a `click`
+                    // and a `contextmenu` event for it, so without this
+                    // guard the row navigates away before the context menu
+                    // (built from onContextMenu below) ever gets a chance
+                    // to show.
+                    if (e.ctrlKey) return
+                    navigate(`/nodes/${n.id}`)
+                  }}
                   onContextMenu={e => {
                     if (!canAct || n.status === 'decommissioned') return
                     e.preventDefault()
                     setMenu({ x: e.clientX, y: e.clientY, node: n })
                   }}
                 >
-                  <td className="px-5 py-3 cursor-pointer" onClick={() => navigate(`/nodes/${n.id}`)}>
+                  <td className="px-5 py-3">
                     <p className="text-white font-medium">{n.display_name || n.hostname}</p>
                     {n.current_user && <p className="text-xs text-white">{n.current_user}</p>}
                   </td>
-                  <td className="px-5 py-3 text-white text-xs capitalize cursor-pointer" onClick={() => navigate(`/nodes/${n.id}`)}>{n.os_type}{n.os_version ? ` ${n.os_version}` : ''}</td>
-                  <td className="px-5 py-3 text-white text-xs font-mono cursor-pointer" onClick={() => navigate(`/nodes/${n.id}`)}>{n.ip_address || '—'}</td>
-                  <td className="px-5 py-3 text-white text-xs hidden md:table-cell cursor-pointer" onClick={() => navigate(`/nodes/${n.id}`)}>
+                  <td className="px-5 py-3 text-white text-xs capitalize">{n.os_type}{n.os_version ? ` ${n.os_version}` : ''}</td>
+                  <td className="px-5 py-3 text-white text-xs font-mono">{n.ip_address || '—'}</td>
+                  <td className="px-5 py-3 text-white text-xs hidden md:table-cell">
                     {n.disk_free_gb !== null && n.disk_total_gb ? `${fmtBytes(n.disk_free_gb)} / ${fmtBytes(n.disk_total_gb)}` : '—'}
                   </td>
-                  <td className="px-5 py-3 cursor-pointer" onClick={() => navigate(`/nodes/${n.id}`)}>
+                  <td className="px-5 py-3">
                     <span className={`text-xs px-2 py-0.5 rounded-full capitalize ${STATUS_STYLES[n.status] ?? STATUS_STYLES.pending}`}>{n.status}</span>
                   </td>
-                  <td className="px-5 py-3 text-white text-xs cursor-pointer" onClick={() => navigate(`/nodes/${n.id}`)}>{fmtRelative(n.last_checkin_at)}</td>
+                  <td className="px-5 py-3 text-white text-xs">{fmtRelative(n.last_checkin_at)}</td>
                   <td className="px-5 py-3 text-right">
                     {n.status === 'decommissioned' && user?.role === 'admin' && (
-                      <button onClick={() => deletePermanently(n.id, n.display_name || n.hostname)}
+                      <button onClick={e => { e.stopPropagation(); deletePermanently(n.id, n.display_name || n.hostname) }}
                         className="text-xs text-red-400 hover:text-red-300 transition-colors">
                         Delete Permanently
                       </button>
