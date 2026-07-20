@@ -46,7 +46,15 @@ async def list_tokens(_: AdminUser, db: DbDep) -> list[dict]:
         """
     ) as cur:
         rows = await cur.fetchall()
-    return [dict(r) for r in rows]
+    result = [dict(r) for r in rows]
+    # SQLite has no real boolean type — `revoked` comes back as an int
+    # (0/1). Cast it explicitly so the JSON response actually sends a JSON
+    # boolean, not 0/1, which React renders as literal "0" text when used
+    # in a `{cond && <Elem/>}` conditional (0 is falsy but not `false`, so
+    # the short-circuit returns 0 itself instead of nothing).
+    for r in result:
+        r["revoked"] = bool(r["revoked"])
+    return result
 
 
 @router.post("/tokens", status_code=201)
