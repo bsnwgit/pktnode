@@ -15,8 +15,6 @@ package main
 
 import (
 	"fmt"
-	"os/exec"
-	"runtime"
 	"time"
 
 	"github.com/getlantern/systray"
@@ -40,8 +38,6 @@ func onReady() {
 	mServer := systray.AddMenuItem("", "")
 	mServer.Disable()
 	systray.AddSeparator()
-	mOpen := systray.AddMenuItem("Open pktNode", "Open the pktNode web UI")
-	systray.AddSeparator()
 	mStop := systray.AddMenuItem("Stop Agent…", "Stop the agent — requires the override code from this node's page in pktNode")
 
 	refresh(mStatus, mServer)
@@ -58,8 +54,6 @@ func onReady() {
 				return
 			}
 			checkIncomingMessages()
-		case <-mOpen.ClickedCh:
-			openServer()
 		case <-mStop.ClickedCh:
 			go handleStopRequest()
 		}
@@ -125,23 +119,6 @@ func relativeTime(rfc3339 string) string {
 	default:
 		return fmt.Sprintf("%dh ago", int(d.Hours()))
 	}
-}
-
-func openServer() {
-	status, err := config.LoadStatus()
-	if err != nil || status.ServerURL == "" {
-		return
-	}
-	var cmd *exec.Cmd
-	switch runtime.GOOS {
-	case "darwin":
-		cmd = exec.Command("open", status.ServerURL)
-	case "windows":
-		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", status.ServerURL)
-	default:
-		cmd = exec.Command("xdg-open", status.ServerURL)
-	}
-	_ = cmd.Start()
 }
 
 // handleStopRequest prompts for the override code via a native OS dialog
