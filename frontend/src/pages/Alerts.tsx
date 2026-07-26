@@ -359,7 +359,7 @@ function RuleForm({
 
 // ── Pagination ────────────────────────────────────────────────────────────────
 
-const PAGE_SIZE = 25
+const PAGE_SIZE_OPTIONS = [25, 50, 75, 100]
 
 function Pagination({ page, totalPages, onChange }: { page: number; totalPages: number; onChange: (p: number) => void }) {
   if (totalPages <= 1) return null
@@ -420,7 +420,12 @@ export default function Alerts() {
   const [error, setError]           = useState('')
   const [eventsPage, setEventsPage] = useState(1)
   const [historyPage, setHistoryPage] = useState(1)
+  const [eventsPageSize, setEventsPageSize] = useState(25)
+  const [historyPageSize, setHistoryPageSize] = useState(25)
   const [search, setSearch] = useState('')
+
+  const changeEventsPageSize = (size: number) => { setEventsPageSize(size); setEventsPage(1) }
+  const changeHistoryPageSize = (size: number) => { setHistoryPageSize(size); setHistoryPage(1) }
 
   const loadEvents = async (silent = false) => {
     if (!silent) setLoading(true)
@@ -501,10 +506,10 @@ export default function Alerts() {
   const filteredEvents  = events.filter(matchesSearch)
   const filteredHistory = history.filter(matchesSearch)
 
-  const eventsTotalPages   = Math.max(1, Math.ceil(filteredEvents.length / PAGE_SIZE))
-  const historyTotalPages  = Math.max(1, Math.ceil(filteredHistory.length / PAGE_SIZE))
-  const eventsPageItems    = filteredEvents.slice((eventsPage - 1) * PAGE_SIZE, eventsPage * PAGE_SIZE)
-  const historyPageItems   = filteredHistory.slice((historyPage - 1) * PAGE_SIZE, historyPage * PAGE_SIZE)
+  const eventsTotalPages   = Math.max(1, Math.ceil(filteredEvents.length / eventsPageSize))
+  const historyTotalPages  = Math.max(1, Math.ceil(filteredHistory.length / historyPageSize))
+  const eventsPageItems    = filteredEvents.slice((eventsPage - 1) * eventsPageSize, eventsPage * eventsPageSize)
+  const historyPageItems   = filteredHistory.slice((historyPage - 1) * historyPageSize, historyPage * historyPageSize)
 
   return (
     <div className="space-y-4">
@@ -560,7 +565,22 @@ export default function Alerts() {
           ) : (
             eventsPageItems.map(e => <EventCard key={e.id} event={e} onAck={ack} />)
           )}
-          <Pagination page={eventsPage} totalPages={eventsTotalPages} onChange={setEventsPage} />
+          <div className="flex items-center justify-center gap-6">
+            <Pagination page={eventsPage} totalPages={eventsTotalPages} onChange={setEventsPage} />
+            <div className="flex items-center gap-2">
+              <label htmlFor="events-per-page" className="text-xs text-white">Alerts per page:</label>
+              <select
+                id="events-per-page"
+                value={eventsPageSize}
+                onChange={e => changeEventsPageSize(Number(e.target.value))}
+                className="text-sm bg-gray-800 border border-gray-700 text-white rounded-lg px-2 py-1 focus:outline-none focus:border-sky-500"
+              >
+                {PAGE_SIZE_OPTIONS.map(size => (
+                  <option key={size} value={size}>{size}</option>
+                ))}
+              </select>
+            </div>
+          </div>
         </div>
       )}
 
@@ -573,7 +593,22 @@ export default function Alerts() {
           ) : (
             historyPageItems.map(e => <EventCard key={e.id} event={e} onAck={ack} />)
           )}
-          <Pagination page={historyPage} totalPages={historyTotalPages} onChange={setHistoryPage} />
+          <div className="flex items-center justify-center gap-6">
+            <Pagination page={historyPage} totalPages={historyTotalPages} onChange={setHistoryPage} />
+            <div className="flex items-center gap-2">
+              <label htmlFor="history-per-page" className="text-xs text-white">History per page:</label>
+              <select
+                id="history-per-page"
+                value={historyPageSize}
+                onChange={e => changeHistoryPageSize(Number(e.target.value))}
+                className="text-sm bg-gray-800 border border-gray-700 text-white rounded-lg px-2 py-1 focus:outline-none focus:border-sky-500"
+              >
+                {PAGE_SIZE_OPTIONS.map(size => (
+                  <option key={size} value={size}>{size}</option>
+                ))}
+              </select>
+            </div>
+          </div>
         </div>
       )}
 
