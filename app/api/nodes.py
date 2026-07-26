@@ -68,7 +68,7 @@ async def list_nodes(
         SELECT n.id, n.agent_uuid, n.hostname, n.display_name, n.os_type, n.os_version,
                n.arch, n.agent_version, n.ip_address, n.manufacturer, n.model,
                n.cpu_model, n.cpu_cores, n.memory_total_mb, n.disk_total_gb, n.disk_free_gb,
-               n.uptime_seconds, n.current_user, n.tags_json, n.is_active,
+               n.uptime_seconds, n.current_user, n.tags_json, n.is_active, n.alert_host_down_override,
                n.first_seen_at, n.last_checkin_at, n.updated_at,
                {_STATUS_EXPR}
         FROM nodes n
@@ -85,6 +85,9 @@ async def list_nodes(
             d["tags"] = json.loads(d.pop("tags_json"))
         except Exception:
             d["tags"] = []
+        d["alert_host_down_override"] = (
+            None if d["alert_host_down_override"] is None else bool(d["alert_host_down_override"])
+        )
         result.append(d)
 
     if status:
@@ -114,6 +117,9 @@ async def get_node(node_id: int, _: CurrentUser, db: DbDep) -> dict:
         node["tags"] = json.loads(node.pop("tags_json"))
     except Exception:
         node["tags"] = []
+    node["alert_host_down_override"] = (
+        None if node["alert_host_down_override"] is None else bool(node["alert_host_down_override"])
+    )
 
     async with db.execute(
         "SELECT name, version, publisher, install_date, last_seen_at FROM node_software WHERE node_id=? ORDER BY name",
@@ -170,6 +176,18 @@ async def update_node(node_id: int, body: NodeUpdate, _: AnalystUser, db: DbDep)
     if body.notes is not None:
         updates["notes"] = body.notes
     if body.tags is not None:
+        if body.tags:
+            placeholders = ",".join("?" for _ in body.tags)
+            async with db.execute(
+                f"SELECT name FROM groups WHERE name IN ({placeholders})", body.tags
+            ) as cur:
+                known = {r["name"] for r in await cur.fetchall()}
+            unknown = [t for t in body.tags if t not in known]
+            if unknown:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Unknown group(s): {', '.join(unknown)} — create them in Settings → Groups first",
+                )
         updates["tags_json"] = json.dumps(body.tags)
 
     if updates:
@@ -178,6 +196,28 @@ async def update_node(node_id: int, body: NodeUpdate, _: AnalystUser, db: DbDep)
             f"UPDATE nodes SET {set_clause} WHERE id=?", (*updates.values(), node_id)
         )
         await db.commit()
+    return {"ok": True}
+
+
+class AlertOverrideUpdate(BaseModel):
+    # None = inherit the global alert_host_down_enabled setting; True/False =
+    # force this node's node_offline alert on/off regardless of the global setting.
+    host_down_enabled: Optional[bool] = None
+
+
+@router.patch("/{node_id}/alert-overrides")
+async def update_alert_overrides(node_id: int, body: AlertOverrideUpdate, _: AnalystUser, db: DbDep) -> dict:
+    async with db.execute("SELECT id FROM nodes WHERE id=?", (node_id,)) as cur:
+        row = await cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Node not found")
+
+    value = None if body.host_down_enabled is None else int(body.host_down_enabled)
+    await db.execute(
+        "UPDATE nodes SET alert_host_down_override=?, updated_at=datetime('now') WHERE id=?",
+        (value, node_id),
+    )
+    await db.commit()
     return {"ok": True}
 
 

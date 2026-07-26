@@ -84,6 +84,7 @@ DEFAULTS: dict[str, Any] = {
     "ssl_keyfile": "",                # Absolute path to PEM private key on server
 
     # Alerts
+    "alert_host_down_enabled": True,  # Fire node_offline alerts; off = skip + auto-clear open ones
     "alert_event_retention_days": 90, # Days to keep alert_events + notification_log rows
     "alert_disk_low_pct": 10,         # Fire disk_low when free space drops below this %
     "alert_cpu_high_pct": 90,         # Fire cpu_high when CPU stays above this % for the window
