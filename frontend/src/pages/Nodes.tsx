@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { api, NodeSummary, NodeStatus } from '../api/client'
+import { api, NodeSummary, NodeStatus, GroupInfo } from '../api/client'
 import { useAuth } from '../store/auth'
 import HelpButton from '../components/HelpButton'
 
@@ -45,6 +45,8 @@ export default function Nodes() {
   const [nodes, setNodes] = useState<NodeSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState<Set<number>>(new Set())
+  const [groups, setGroups] = useState<GroupInfo[]>([])
+  const [assigningGroup, setAssigningGroup] = useState(false)
   const canAct = user?.role === 'admin' || user?.role === 'analyst'
 
   const load = async () => {
@@ -57,6 +59,7 @@ export default function Nodes() {
   }
 
   useEffect(() => { load(); setSelected(new Set()) }, [statusFilter])
+  useEffect(() => { if (canAct) api.getGroups().then(setGroups).catch(() => {}) }, [canAct])
 
   const deletePermanently = async (id: number, hostname: string) => {
     if (!confirm(
@@ -96,6 +99,18 @@ export default function Nodes() {
     )) return
     await Promise.all(targets.map(n => api.queueCommand(n.id, action, {})))
     setSelected(new Set())
+  }
+
+  const bulkAssignGroup = async (groupName: string) => {
+    const targets = nodes.filter(n => selected.has(n.id) && !n.tags.includes(groupName))
+    setAssigningGroup(true)
+    try {
+      await Promise.all(targets.map(n => api.updateNode(n.id, { tags: [...n.tags, groupName] })))
+      setSelected(new Set())
+      await load()
+    } finally {
+      setAssigningGroup(false)
+    }
   }
 
   return (
@@ -141,6 +156,16 @@ export default function Nodes() {
             <span className="text-sm text-white">{selected.size} selected</span>
             <button onClick={() => bulkPowerAction('reboot')} className="text-xs text-white hover:text-white underline">Reboot</button>
             <button onClick={() => bulkPowerAction('shutdown')} className="text-xs text-red-400 hover:text-red-300 underline">Shut Down</button>
+            <select
+              value=""
+              onChange={e => { if (e.target.value) bulkAssignGroup(e.target.value) }}
+              disabled={assigningGroup || groups.length === 0}
+              title={groups.length === 0 ? 'No groups created yet — create one in Settings → Groups' : undefined}
+              className="text-xs bg-gray-800 border border-gray-700 text-white rounded-lg px-2 py-1 disabled:opacity-50"
+            >
+              <option value="">Assign to group…</option>
+              {groups.map(g => <option key={g.name} value={g.name}>{g.name}</option>)}
+            </select>
             <button onClick={() => setSelected(new Set())} className="text-xs text-white hover:text-white">Clear</button>
           </div>
         )}
