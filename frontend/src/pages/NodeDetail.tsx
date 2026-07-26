@@ -11,7 +11,7 @@ import { api, terminalWsUrl, NodeDetail as NodeDetailType, CommandRecord, NodeMe
 import { useAuth } from '../store/auth'
 import HelpButton from '../components/HelpButton'
 
-const PAGE_SIZE = 15
+const PAGE_SIZE_OPTIONS = [25, 50, 75, 100]
 
 /**
  * Page-number bar: shows every page when there are 5 or fewer, otherwise
@@ -455,7 +455,9 @@ export default function NodeDetail() {
   const [tab, setTabState] = useState<Tab>('overview')
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(25)
   const setTab = (t: Tab) => { setTabState(t); setSearch(''); setPage(1) }
+  const changePageSize = (size: number) => { setPageSize(size); setPage(1) }
   const [loading, setLoading] = useState(true)
   const [showConsole, setShowConsole] = useState(false)
   const [showTerminal, setShowTerminal] = useState(false)
@@ -605,12 +607,12 @@ export default function NodeDetail() {
     commands: filteredCommands,
   }
   const activeList = listForTab[tab]
-  const totalPages = activeList ? Math.max(1, Math.ceil(activeList.length / PAGE_SIZE)) : 1
-  const pageStart = (page - 1) * PAGE_SIZE
-  const pagedSoftware = filteredSoftware.slice(pageStart, pageStart + PAGE_SIZE)
-  const pagedProcesses = filteredProcesses.slice(pageStart, pageStart + PAGE_SIZE)
-  const pagedMetrics = filteredMetrics.slice(pageStart, pageStart + PAGE_SIZE)
-  const pagedCommands = filteredCommands.slice(pageStart, pageStart + PAGE_SIZE)
+  const totalPages = activeList ? Math.max(1, Math.ceil(activeList.length / pageSize)) : 1
+  const pageStart = (page - 1) * pageSize
+  const pagedSoftware = filteredSoftware.slice(pageStart, pageStart + pageSize)
+  const pagedProcesses = filteredProcesses.slice(pageStart, pageStart + pageSize)
+  const pagedMetrics = filteredMetrics.slice(pageStart, pageStart + pageSize)
+  const pagedCommands = filteredCommands.slice(pageStart, pageStart + pageSize)
 
   return (
     <div className="space-y-4">
@@ -797,8 +799,21 @@ export default function NodeDetail() {
       {tab === 'software' && (
         <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
           {filteredSoftware.length > 0 && (
-            <div className="flex justify-center px-5 py-3 border-b border-gray-800">
+            <div className="flex items-center justify-center gap-6 px-5 py-3 border-b border-gray-800">
               <Pagination page={page} totalPages={totalPages} onChange={setPage} />
+              <div className="flex items-center gap-2">
+                <label htmlFor="software-per-page" className="text-xs text-white">Software per page:</label>
+                <select
+                  id="software-per-page"
+                  value={pageSize}
+                  onChange={e => changePageSize(Number(e.target.value))}
+                  className="text-sm bg-gray-800 border border-gray-700 text-white rounded-lg px-2 py-1 focus:outline-none focus:border-blue-500"
+                >
+                  {PAGE_SIZE_OPTIONS.map(size => (
+                    <option key={size} value={size}>{size}</option>
+                  ))}
+                </select>
+              </div>
             </div>
           )}
           <table className="w-full text-sm">
@@ -830,8 +845,21 @@ export default function NodeDetail() {
       {tab === 'processes' && (
         <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
           {filteredProcesses.length > 0 && (
-            <div className="flex justify-center px-5 py-3 border-b border-gray-800">
+            <div className="flex items-center justify-center gap-6 px-5 py-3 border-b border-gray-800">
               <Pagination page={page} totalPages={totalPages} onChange={setPage} />
+              <div className="flex items-center gap-2">
+                <label htmlFor="processes-per-page" className="text-xs text-white">Processes per page:</label>
+                <select
+                  id="processes-per-page"
+                  value={pageSize}
+                  onChange={e => changePageSize(Number(e.target.value))}
+                  className="text-sm bg-gray-800 border border-gray-700 text-white rounded-lg px-2 py-1 focus:outline-none focus:border-blue-500"
+                >
+                  {PAGE_SIZE_OPTIONS.map(size => (
+                    <option key={size} value={size}>{size}</option>
+                  ))}
+                </select>
+              </div>
             </div>
           )}
           <table className="w-full text-sm">
@@ -878,8 +906,21 @@ export default function NodeDetail() {
           </div>
           <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
             {filteredMetrics.length > 0 && (
-              <div className="flex justify-center px-5 py-3 border-b border-gray-800">
+              <div className="flex items-center justify-center gap-6 px-5 py-3 border-b border-gray-800">
                 <Pagination page={page} totalPages={totalPages} onChange={setPage} />
+                <div className="flex items-center gap-2">
+                  <label htmlFor="metrics-per-page" className="text-xs text-white">Metrics per page:</label>
+                  <select
+                    id="metrics-per-page"
+                    value={pageSize}
+                    onChange={e => changePageSize(Number(e.target.value))}
+                    className="text-sm bg-gray-800 border border-gray-700 text-white rounded-lg px-2 py-1 focus:outline-none focus:border-blue-500"
+                  >
+                    {PAGE_SIZE_OPTIONS.map(size => (
+                      <option key={size} value={size}>{size}</option>
+                    ))}
+                  </select>
+                </div>
               </div>
             )}
             <table className="w-full text-sm">
@@ -916,8 +957,21 @@ export default function NodeDetail() {
           </p>
           <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
           {filteredCommands.length > 0 && (
-            <div className="flex justify-center px-5 py-3 border-b border-gray-800">
+            <div className="flex items-center justify-center gap-6 px-5 py-3 border-b border-gray-800">
               <Pagination page={page} totalPages={totalPages} onChange={setPage} />
+              <div className="flex items-center gap-2">
+                <label htmlFor="commands-per-page" className="text-xs text-white">Commands per page:</label>
+                <select
+                  id="commands-per-page"
+                  value={pageSize}
+                  onChange={e => changePageSize(Number(e.target.value))}
+                  className="text-sm bg-gray-800 border border-gray-700 text-white rounded-lg px-2 py-1 focus:outline-none focus:border-blue-500"
+                >
+                  {PAGE_SIZE_OPTIONS.map(size => (
+                    <option key={size} value={size}>{size}</option>
+                  ))}
+                </select>
+              </div>
             </div>
           )}
           <table className="w-full text-sm">
