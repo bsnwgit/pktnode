@@ -181,10 +181,10 @@ async def set_capture_level(
 # ── Helper ────────────────────────────────────────────────────────────────────
 
 def _get_sqlite_handler():
-    """Return the first SQLiteLogHandler found on the root logger, if any."""
+    """Return the first SQLiteLogHandler found on the pktnode logger, if any."""
     try:
         from app.logging_handler import SQLiteLogHandler
-        for h in logging.root.handlers:
+        for h in logging.getLogger("pktnode").handlers:
             if isinstance(h, SQLiteLogHandler):
                 return h
     except ImportError:
