@@ -27,6 +27,7 @@ whoever's logged into the machine (via a tray/menu-bar helper).
 - [Configuration Reference](#configuration-reference)
 - [Running & Managing the Service](#running--managing-the-service)
 - [Roles & Auth](#roles--auth)
+- [IP Intelligence Lookup](#ip-intelligence-lookup)
 - [Alerting](#alerting)
 - [Suite Integration](#suite-integration)
 - [Backup & Restore](#backup--restore)
@@ -110,9 +111,13 @@ itself.
   (admin/analyst) multi-select rows with the checkbox column to **bulk
   reboot or shut down** several nodes at once — each queues a `reboot`/
   `shutdown` command per selected node, applied on that node's next
-  check-in, same as the single-node action.
+  check-in, same as the single-node action — or **bulk-assign them to a
+  group** via the same selection (see [Groups](#groups)).
 - **Node detail** (`/nodes/{id}`) — tabs for Overview (hardware, IP, current
-  user, network interfaces), Software (installed-package inventory),
+  user, network interfaces, **Groups** membership, and a **Host down
+  alerts** override — see [Groups](#groups) and
+  [Per-device and group overrides](#per-device-and-group-overrides)),
+  Software (installed-package inventory),
   Processes (running-process snapshot, with a per-row **Kill** action),
   Metrics (CPU/mem/disk history chart + table), Commands (remote-action
   history), and Messages (tray chat, see below). Admin/analyst get two
@@ -371,6 +376,23 @@ Three roles: `admin` (full access, including Users and Enrollment),
 Local username/password auth plus optional SAML 2.0 SSO (Settings →
 Security → Auth).
 
+## IP Intelligence Lookup
+
+`GET /api/ip-info/{ip}` runs a public IP through four providers concurrently:
+
+- **ipinfo.io** — geolocation/ASN/org info, plus company, privacy (VPN/proxy/Tor/relay/hosting), and abuse contact on paid plans
+- **ipapi.is** — geolocation, ASN/org, company, abuse contact, VPN/proxy/Tor/datacenter/abuser detection, all in one call, no plan gating
+- **AbuseIPDB** — abuse confidence score and report history
+- **MXToolbox** — reverse DNS (PTR), ASN, and a blacklist/RBL check
+
+Private/loopback/link-local/reserved/multicast addresses are rejected — external providers have nothing useful to say about them.
+
+Keys are **per-user**, not app-wide: each logged-in user stores their own under Settings → User Keys (`app/api/user_api_keys.py`), and lookups run under that user's own key/quota — no shared/admin key, no cross-user visibility. A fifth provider slot, IPQualityScore, can be saved and tested there but isn't consumed by the lookup yet.
+
+MXToolbox's other commands — email/DNS record checks (SPF, DMARC, DKIM, MX, DNS, TXT, SOA, BIMI, MTA-STS, TLSRPT, A, AAAA) and active probes (ping, traceroute, TCP/HTTP/HTTPS/SMTP connect, run from MXToolbox's own infrastructure against the target) — are reachable via `POST /api/mxtoolbox/lookup` (`{command, argument, port?}`, `app/api/mxtoolbox.py`) but aren't surfaced in the UI yet.
+
+**Backend-only for now**: unlike pktsnmp/pktflow/pktlog/pktwifi, no page in pktNode actually renders an IP address as a clickable link into this lookup yet (a node's own IP on its detail page and the Nodes list are still plain text) — the API and the Settings → User Keys management UI are both fully wired, there's just no click-through surface pointed at them yet.
+
 ## Alerting
 
 Four built-in rule types, evaluated every 60 seconds:
@@ -380,9 +402,64 @@ Four built-in rule types, evaluated every 60 seconds:
 - `cpu_high` / `mem_high` — average usage over the rule's eval window
   stays above a configured percentage
 
+Rules themselves (thresholds, severity, notification channels, cooldown)
+are managed on the **Alerts** page → Rules tab. Nothing stops you from
+creating more than one rule of the same type — e.g. a `warning`-severity
+and a `critical`-severity `disk_low` rule at different thresholds.
+
 Notification channels (Slack/Email/PagerDuty/Webhook/TraceCat) are
 configured under Settings → Notifications and used by alert rules when
 they fire.
+
+### Per-device and group overrides
+
+Every alert's on/off state (and, for the three threshold-based types, its
+threshold) resolves through a 3-level override chain, most specific wins:
+
+1. **Per-device** (`node_offline` only) — a device's own page (Overview
+   tab) has a **Host down alerts** dropdown: *Inherit from Settings* /
+   *Always alert* / *Never alert*. Use this for one machine that's expected
+   to go offline routinely (e.g. a workstation that's shut down every
+   night) without touching the rule or creating a whole group for it.
+2. **Per-group** (all four rule types, plus threshold overrides) — see
+   Groups below.
+3. **The rule's own default** — `alert_host_down_enabled` (Settings →
+   General) for `node_offline`; each rule's own `threshold_pct` (Alerts →
+   Rules) for the other three.
+
+Turning an alert off at any level also auto-resolves any event already
+open for it — it doesn't just suppress future firing.
+
+### Groups
+
+Groups are created and deleted from **Settings → Groups** (admin only) —
+that is the *only* place one comes into existence. A device's own page (or
+the Nodes list's bulk action, below) just picks from that existing list; it
+can't invent a new group name, and this is enforced server-side, not just
+hidden in the UI.
+
+- **Assign one device**: on its detail page (Overview tab), the **Groups**
+  section shows a chip per group it's already in (with a remove button)
+  and a dropdown to add it to any other existing group. A device can be in
+  more than one group at once.
+- **Assign in bulk**: on the **Nodes** page, multi-select devices with the
+  checkbox column, then use the **Assign to group…** dropdown that appears
+  in the bulk action bar alongside Reboot/Shut Down — adds that group to
+  every selected device without disturbing their other memberships.
+- **Group alert overrides** (Settings → Groups): each group can override
+  any specific *configured alert rule* — by rule, not just by type, since
+  (as above) you can have more than one rule of the same type and a
+  type-wide override couldn't tell them apart. Each row lets you force
+  that rule **Inherit / Always alert / Never alert** for the group's
+  members, and, for `disk_low`/`cpu_high`/`mem_high`, override its
+  threshold % (leave blank to inherit the rule's own value).
+- **Conflicting groups**: if a device is in two groups with different
+  settings for the *same field* of the *same rule*, whichever group's
+  setting was saved most recently wins. Non-overlapping fields both
+  apply — e.g. Group A's `enabled=off` and Group B's `threshold_pct=5` on
+  the same rule both take effect together.
+- **Deleting a group** strips it from every device currently in it and
+  drops whatever alert overrides were set for it.
 
 ## Suite Integration
 

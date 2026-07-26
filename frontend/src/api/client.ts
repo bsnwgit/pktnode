@@ -235,6 +235,8 @@ export const api = {
   getNode: (id: number) => request<NodeDetail>(`/nodes/${id}`),
   updateNode: (id: number, body: { display_name?: string; notes?: string; tags?: string[] }) =>
     request<{ ok: boolean }>(`/nodes/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+  setNodeAlertOverrides: (id: number, body: { host_down_enabled: boolean | null }) =>
+    request<{ ok: boolean }>(`/nodes/${id}/alert-overrides`, { method: 'PATCH', body: JSON.stringify(body) }),
   decommissionNode: (id: number) => request<{ ok: boolean }>(`/nodes/${id}/decommission`, { method: 'POST' }),
   deleteNode: (id: number) => request(`/nodes/${id}`, { method: 'DELETE' }),
 
@@ -276,9 +278,58 @@ export const api = {
   updateAlertRule: (id: number, body: Record<string, unknown>) =>
     request(`/alerts/rules/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
   toggleAlertRule: (id: number) => request(`/alerts/rules/${id}/toggle`, { method: 'POST' }),
+
+  // ── Groups — created only in Settings -> Groups; a device just picks from
+  // this list (see updateNode's tags) ───────────────────────────────────────
+  getGroups: () => request<GroupInfo[]>('/groups/'),
+  createGroup: (name: string) =>
+    request<{ ok: boolean; name: string }>('/groups/', { method: 'POST', body: JSON.stringify({ name }) }),
+  deleteGroup: (name: string) =>
+    request<{ ok: boolean }>(`/groups/${encodeURIComponent(name)}`, { method: 'DELETE' }),
+  setGroupOverride: (groupName: string, ruleId: number, body: { enabled: boolean | null; threshold_pct: number | null }) =>
+    request<{ ok: boolean }>(`/groups/${encodeURIComponent(groupName)}/overrides/${ruleId}`, {
+      method: 'PUT', body: JSON.stringify(body),
+    }),
+
+  // ── User API Keys ─────────────────────────────────────────────────────────
+  getUserApiKeys: () => request<UserApiKey[]>('/user-api-keys'),
+  setUserApiKey: (provider: string, api_key: string) =>
+    request<UserApiKey>(`/user-api-keys/${provider}`, { method: 'PUT', body: JSON.stringify({ api_key }) }),
+  testUserApiKey: (provider: string, api_key: string) =>
+    request<{ status: string; detail: string }>(`/user-api-keys/${provider}/test`, { method: 'POST', body: JSON.stringify({ api_key }) }),
+  setIpinfoFields: (enabled_fields: string[]) =>
+    request<UserApiKey>('/user-api-keys/ipinfo/fields', { method: 'PUT', body: JSON.stringify({ enabled_fields }) }),
+  setIpapiIsFields: (enabled_fields: string[]) =>
+    request<UserApiKey>('/user-api-keys/ipapi_is/fields', { method: 'PUT', body: JSON.stringify({ enabled_fields }) }),
+  setIpapiIsFreeTier: (free_tier: boolean) =>
+    request<UserApiKey>('/user-api-keys/ipapi_is/free-tier', { method: 'PUT', body: JSON.stringify({ free_tier }) }),
+  setMxtoolboxFields: (enabled_fields: string[]) =>
+    request<UserApiKey>('/user-api-keys/mxtoolbox/fields', { method: 'PUT', body: JSON.stringify({ enabled_fields }) }),
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
+
+export interface UserApiKey {
+  provider: string
+  label: string
+  api_key: string
+  updated_at: string | null
+  enabled_fields: string[] | null // ipinfo/ipapi_is/mxtoolbox only; null = not customized (all shown)
+  free_tier: boolean // ipapi_is only — use its keyless free tier instead of api_key
+}
+
+export interface GroupOverride {
+  group_name: string
+  rule_id: number
+  enabled: boolean | null
+  threshold_pct: number | null
+}
+
+export interface GroupInfo {
+  name: string
+  member_count: number
+  overrides: GroupOverride[]
+}
 
 export interface UserIn {
   username: string
@@ -371,6 +422,7 @@ export interface NodeSummary {
   uptime_seconds: number | null
   current_user: string | null
   tags: string[]
+  alert_host_down_override: boolean | null
   is_active: boolean
   first_seen_at: string
   last_checkin_at: string | null
