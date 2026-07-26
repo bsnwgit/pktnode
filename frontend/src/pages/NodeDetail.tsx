@@ -7,7 +7,7 @@ import {
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
-import { api, terminalWsUrl, NodeDetail as NodeDetailType, CommandRecord, NodeMessage } from '../api/client'
+import { api, terminalWsUrl, NodeDetail as NodeDetailType, CommandRecord, NodeMessage, GroupInfo } from '../api/client'
 import { useAuth } from '../store/auth'
 import HelpButton from '../components/HelpButton'
 
@@ -514,6 +514,44 @@ export default function NodeDetail() {
     await load()
   }
 
+  const [savingHostDownOverride, setSavingHostDownOverride] = useState(false)
+  const setHostDownOverride = async (value: string) => {
+    if (!id) return
+    const host_down_enabled = value === 'inherit' ? null : value === 'on'
+    setSavingHostDownOverride(true)
+    try {
+      await api.setNodeAlertOverrides(Number(id), { host_down_enabled })
+      await load()
+    } finally {
+      setSavingHostDownOverride(false)
+    }
+  }
+
+  const [allGroups, setAllGroups] = useState<GroupInfo[]>([])
+  useEffect(() => { api.getGroups().then(setAllGroups).catch(() => {}) }, [])
+
+  const [savingGroups, setSavingGroups] = useState(false)
+  const addGroup = async (name: string) => {
+    if (!id || !node || !name || node.tags.includes(name)) return
+    setSavingGroups(true)
+    try {
+      await api.updateNode(Number(id), { tags: [...node.tags, name] })
+      await load()
+    } finally {
+      setSavingGroups(false)
+    }
+  }
+  const removeGroup = async (name: string) => {
+    if (!id || !node) return
+    setSavingGroups(true)
+    try {
+      await api.updateNode(Number(id), { tags: node.tags.filter(t => t !== name) })
+      await load()
+    } finally {
+      setSavingGroups(false)
+    }
+  }
+
   const decommission = async () => {
     if (!id || !confirm(
       'Decommission & revoke this node?\n\n' +
@@ -693,6 +731,50 @@ export default function NodeDetail() {
             <div><p className="text-xs text-white">Current user</p><p className="text-white">{node.current_user || '—'}</p></div>
             <div><p className="text-xs text-white">Timezone</p><p className="text-white">{node.timezone || '—'}</p></div>
             <div><p className="text-xs text-white">First seen</p><p className="text-white">{fmtTime(node.first_seen_at)}</p></div>
+          </div>
+          <div>
+            <p className="text-xs text-white mb-2">Groups</p>
+            <div className="flex items-center gap-2 flex-wrap">
+              {node.tags.map(t => (
+                <span key={t} className="inline-flex items-center gap-1.5 bg-gray-800 border border-gray-700 rounded-full px-2.5 py-1 text-xs text-white">
+                  {t}
+                  {canAct && (
+                    <button onClick={() => removeGroup(t)} className="text-white hover:text-red-400 leading-none">×</button>
+                  )}
+                </span>
+              ))}
+              {node.tags.length === 0 && <span className="text-sm text-white">No groups assigned</span>}
+            </div>
+            {canAct && (
+              allGroups.filter(g => !node.tags.includes(g.name)).length > 0 ? (
+                <select
+                  value=""
+                  onChange={e => { if (e.target.value) addGroup(e.target.value) }}
+                  disabled={savingGroups}
+                  className="mt-2 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white disabled:opacity-50"
+                >
+                  <option value="">Add to a group…</option>
+                  {allGroups.filter(g => !node.tags.includes(g.name)).map(g => (
+                    <option key={g.name} value={g.name}>{g.name}</option>
+                  ))}
+                </select>
+              ) : (
+                <p className="text-xs text-white mt-2">
+                  {allGroups.length === 0 ? 'No groups created yet — create one in Settings → Groups.' : 'This device is already in every group.'}
+                </p>
+              )
+            )}
+            <p className="text-xs text-white mt-3 mb-2">Host down alerts</p>
+            <select
+              value={node.alert_host_down_override === null ? 'inherit' : node.alert_host_down_override ? 'on' : 'off'}
+              onChange={e => setHostDownOverride(e.target.value)}
+              disabled={!canAct || savingHostDownOverride}
+              className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white disabled:opacity-50"
+            >
+              <option value="inherit">Inherit from Settings</option>
+              <option value="on">Always alert</option>
+              <option value="off">Never alert</option>
+            </select>
           </div>
           <div>
             <p className="text-xs text-white mb-2">Network interfaces</p>
