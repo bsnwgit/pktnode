@@ -1,5 +1,5 @@
 import { Component, Fragment, useEffect, useRef, useState } from 'react'
-import { api, getToken, User, UserIn, SslStatus } from '../api/client'
+import { api, getToken, User, UserIn, SslStatus, UserApiKey, GroupInfo, GroupOverride } from '../api/client'
 import { useAutoRefresh } from '../store/autoRefresh'
 import { useAuth } from '../store/auth'
 import HelpButton from '../components/HelpButton'
@@ -37,9 +37,9 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
   )
 }
 
-function TextInput({ value, onChange, placeholder = '', secret = false, mono = false }: {
+function TextInput({ value, onChange, placeholder = '', secret = false, mono = false, disabled = false }: {
   value: string; onChange: (v: string) => void
-  placeholder?: string; secret?: boolean; mono?: boolean
+  placeholder?: string; secret?: boolean; mono?: boolean; disabled?: boolean
 }) {
   return (
     <input
@@ -47,7 +47,8 @@ function TextInput({ value, onChange, placeholder = '', secret = false, mono = f
       value={value}
       onChange={e => onChange(e.target.value)}
       placeholder={placeholder}
-      className={`w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500 ${mono ? 'font-mono' : ''}`}
+      disabled={disabled}
+      className={`w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500 ${mono ? 'font-mono' : ''} ${disabled ? 'opacity-40 cursor-not-allowed' : ''}`}
     />
   )
 }
@@ -390,13 +391,15 @@ function parseIdpMetadata(xml: string): {
 // ── Main page ─────────────────────────────────────────────────────────────────
 // No app-specific tabs after a divider here — Enrollment (pktNode's one
 // app-specific tab) moved out to its own top-level nav item.
-type TabId = 'general' | 'security' | 'data' | 'notifications'
+type TabId = 'general' | 'security' | 'data' | 'notifications' | 'groups' | 'apikeys'
 
 const TABS: Array<{ id: TabId; label: string; adminOnly?: boolean; gapBefore?: boolean }> = [
   { id: 'general',       label: 'General' },
   { id: 'security',      label: 'Security' },
   { id: 'data',          label: 'Data' },
   { id: 'notifications', label: 'Notifications' },
+  { id: 'apikeys',       label: 'User Keys' },
+  { id: 'groups',        label: 'Groups', gapBefore: true },
 ]
 
 // ── Security tab — its own left-hand vertical tab strip ──────────────────────
@@ -507,6 +510,408 @@ function PktHubTokenDisplay() {
 }
 // ── End Suite Integration ─────────────────────────────────────────────────────
 
+// ── Groups ────────────────────────────────────────────────────────────────────
+// Groups are created here and only here — a device's own page just picks
+// from this list (see NodeDetail.tsx), it can't invent a new one. Each group
+// can override any configured alert *rule* (Alerts page) for every device
+// carrying it — by rule, not just by type, since two rules can share a type
+// (e.g. a "warning" and a "critical" disk_low rule at different thresholds).
+interface AlertRuleSummary {
+  id: number
+  name: string
+  rule_type: string
+}
+
+const RULE_TYPE_LABELS: Record<string, string> = {
+  node_offline: 'Host down',
+  disk_low:     'Disk space low',
+  cpu_high:     'CPU usage high',
+  mem_high:     'Memory usage high',
+}
+
+function GroupOverrideRow({ groupName, rule, override, onSaved }: {
+  groupName: string; rule: AlertRuleSummary
+  override: GroupOverride | undefined
+  onSaved: () => void
+}) {
+  const hasThreshold = rule.rule_type !== 'node_offline'
+  const [saving, setSaving] = useState(false)
+  const enabledValue = override?.enabled ?? null
+  const [thresholdDraft, setThresholdDraft] = useState(override?.threshold_pct != null ? String(override.threshold_pct) : '')
+
+  useEffect(() => {
+    setThresholdDraft(override?.threshold_pct != null ? String(override.threshold_pct) : '')
+  }, [override?.threshold_pct])
+
+  const save = async (enabled: boolean | null, thresholdStr: string) => {
+    setSaving(true)
+    try {
+      const threshold_pct = thresholdStr.trim() === '' ? null : Number(thresholdStr)
+      await api.setGroupOverride(groupName, rule.id, { enabled, threshold_pct })
+      await onSaved()
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-3 flex-wrap">
+      <span className="text-xs text-white w-56 shrink-0">
+        {rule.name} <span className="text-gray-500">({RULE_TYPE_LABELS[rule.rule_type] ?? rule.rule_type})</span>
+      </span>
+      <select
+        value={enabledValue === null ? 'inherit' : enabledValue ? 'on' : 'off'}
+        onChange={e => { const v = e.target.value; save(v === 'inherit' ? null : v === 'on', thresholdDraft) }}
+        disabled={saving}
+        className="bg-gray-800 border border-gray-700 rounded-lg px-2 py-1 text-xs text-white disabled:opacity-50"
+      >
+        <option value="inherit">Inherit</option>
+        <option value="on">Always alert</option>
+        <option value="off">Never alert</option>
+      </select>
+      {hasThreshold && (
+        <div className="flex items-center gap-1.5">
+          <input
+            type="number"
+            placeholder="default"
+            value={thresholdDraft}
+            onChange={e => setThresholdDraft(e.target.value)}
+            onBlur={() => save(enabledValue, thresholdDraft)}
+            onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+            disabled={saving}
+            className="w-20 bg-gray-800 border border-gray-700 rounded-lg px-2 py-1 text-xs text-white disabled:opacity-50"
+          />
+          <span className="text-xs text-white">% threshold override</span>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function GroupsTab() {
+  const [groups, setGroups]     = useState<GroupInfo[]>([])
+  const [rules, setRules]       = useState<AlertRuleSummary[]>([])
+  const [loading, setLoading]   = useState(true)
+  const [newName, setNewName]   = useState('')
+  const [creating, setCreating] = useState(false)
+  const [error, setError]       = useState('')
+
+  const load = async () => {
+    try {
+      const [g, r] = await Promise.all([api.getGroups(), api.getAlertRules()])
+      setGroups(g)
+      setRules(r as unknown as AlertRuleSummary[])
+    } catch (e: any) {
+      setError(e.message || 'Failed to load groups')
+    } finally {
+      setLoading(false)
+    }
+  }
+  useEffect(() => { load() }, [])
+
+  const createGroup = async () => {
+    const name = newName.trim()
+    if (!name) return
+    setCreating(true)
+    setError('')
+    try {
+      await api.createGroup(name)
+      setNewName('')
+      await load()
+    } catch (e: any) {
+      setError(e.message || 'Failed to create group')
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  const deleteGroup = async (name: string) => {
+    if (!confirm(`Delete group "${name}"?\n\nThis removes it from every device currently in it and clears any alert overrides set for it.`)) return
+    setError('')
+    try {
+      await api.deleteGroup(name)
+      await load()
+    } catch (e: any) {
+      setError(e.message || 'Failed to delete group')
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2">
+        <h2 className="text-lg font-semibold text-white">Groups</h2>
+        <HelpButton title="Groups — How It Works">
+          <p>Groups are created here, and only here — a device's own page just picks from whatever's already been created, it can't type in a new one.</p>
+          <p>Each group can override any of the four built-in alerts for every device carrying it. Precedence: a device's own override (host-down only, set on its own page) beats its groups, which beat the rule's own default. If a device is in more than one group with conflicting settings for the same alert, whichever group's setting was saved most recently wins for that field.</p>
+        </HelpButton>
+      </div>
+
+      {error && (
+        <div className="bg-red-900/30 border border-red-700/50 text-red-400 text-sm rounded-lg px-4 py-2">{error}</div>
+      )}
+
+      <div className="flex items-center gap-2">
+        <input
+          type="text"
+          value={newName}
+          onChange={e => setNewName(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); createGroup() } }}
+          placeholder="New group name…"
+          disabled={creating}
+          className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white placeholder-gray-600 disabled:opacity-50"
+        />
+        <button
+          onClick={createGroup}
+          disabled={creating || !newName.trim()}
+          className="text-sm bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-medium rounded-lg px-4 py-1.5 transition-colors"
+        >
+          + New Group
+        </button>
+      </div>
+
+      {loading ? (
+        <p className="text-sm text-white">Loading…</p>
+      ) : groups.length === 0 ? (
+        <p className="text-sm text-white">No groups yet — create one above.</p>
+      ) : (
+        <div className="space-y-3">
+          {groups.map(g => (
+            <div key={g.name} className="bg-gray-900 border border-gray-800 rounded-xl p-4 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="text-white font-medium">{g.name}</span>
+                  <span className="text-xs text-white">{g.member_count} device{g.member_count === 1 ? '' : 's'}</span>
+                </div>
+                <button onClick={() => deleteGroup(g.name)} className="text-xs text-red-400 hover:text-red-300 transition-colors">
+                  Delete
+                </button>
+              </div>
+              <div className="space-y-2 pl-1">
+                {rules.length === 0 ? (
+                  <p className="text-xs text-white">No alert rules configured yet — create one on the Alerts page first.</p>
+                ) : (
+                  rules.map(rule => (
+                    <GroupOverrideRow
+                      key={rule.id}
+                      groupName={g.name}
+                      rule={rule}
+                      override={g.overrides.find(o => o.rule_id === rule.id)}
+                      onSaved={load}
+                    />
+                  ))
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+// ── End Groups ─────────────────────────────────────────────────────────────────
+
+// ── User API Keys ──────────────────────────────────────────────────────────────
+// Personal vault — each logged-in user stores their own keys for external
+// lookup providers, scoped to that user (no admin-wide view). This tab only
+// stores/tests keys; nothing in the app consumes them yet.
+// Providers whose response the user can filter down to specific sections in
+// the IP Lookup modal. Keyed by provider id; each entry's field keys match
+// what the backend's IPINFO_FIELDS / IPAPI_IS_FIELDS constants accept.
+const FIELD_SETS: Record<string, { key: string; label: string }[]> = {
+  ipinfo: [
+    { key: 'geolocation', label: 'Geolocation' },
+    { key: 'asn',         label: 'ASN / Org' },
+    { key: 'company',     label: 'Company' },
+    { key: 'privacy',     label: 'Privacy Detection (VPN/Proxy/Tor)' },
+    { key: 'abuse',       label: 'Abuse Contact' },
+    { key: 'domains',     label: 'Hosted Domains' },
+  ],
+  ipapi_is: [
+    { key: 'geolocation', label: 'Geolocation' },
+    { key: 'asn',         label: 'ASN / Org' },
+    { key: 'company',     label: 'Company' },
+    { key: 'detection',   label: 'Threat Detection (VPN/Proxy/Tor/Datacenter)' },
+    { key: 'abuse',       label: 'Abuse Contact' },
+  ],
+  mxtoolbox: [
+    { key: 'ptr',       label: 'Reverse DNS (PTR)' },
+    { key: 'asn',       label: 'ASN' },
+    { key: 'blacklist', label: 'Blacklist Check' },
+  ],
+}
+const setFieldsApi: Record<string, (fields: string[]) => Promise<UserApiKey>> = {
+  ipinfo: api.setIpinfoFields,
+  ipapi_is: api.setIpapiIsFields,
+  mxtoolbox: api.setMxtoolboxFields,
+}
+
+function ApiKeysTab() {
+  const { user }                = useAuth()
+  const [keys, setKeys]         = useState<UserApiKey[]>([])
+  const [loading, setLoading]   = useState(true)
+  const [drafts, setDrafts]     = useState<Record<string, string>>({})
+  const [saving, setSaving]     = useState<Record<string, boolean>>({})
+  const [saved, setSaved]       = useState<Record<string, boolean>>({})
+  const [error, setError]       = useState<Record<string, string>>({})
+  const [testing, setTesting]   = useState<Record<string, boolean>>({})
+  const [testResult, setTestResult] = useState<Record<string, { ok: boolean; detail: string } | undefined>>({})
+  const [fieldsError, setFieldsError] = useState('')
+
+  const handleToggleField = async (provider: string, fieldKey: string, checked: boolean) => {
+    const providerKey = keys.find(k => k.provider === provider)
+    const current = providerKey?.enabled_fields ?? FIELD_SETS[provider].map(f => f.key)
+    const next = checked ? [...current, fieldKey] : current.filter(f => f !== fieldKey)
+    setFieldsError('')
+    try {
+      const updated = await setFieldsApi[provider](next)
+      setKeys(prev => prev.map(k => k.provider === provider ? updated : k))
+    } catch (err: any) {
+      setFieldsError(err.message || 'Failed to save')
+    }
+  }
+
+  const handleToggleFreeTier = async (checked: boolean) => {
+    setFieldsError('')
+    try {
+      const updated = await api.setIpapiIsFreeTier(checked)
+      setKeys(prev => prev.map(k => k.provider === 'ipapi_is' ? updated : k))
+    } catch (err: any) {
+      setFieldsError(err.message || 'Failed to save')
+    }
+  }
+
+  const load = () => {
+    setLoading(true)
+    api.getUserApiKeys()
+      .then(rows => {
+        setKeys(rows)
+        setDrafts(Object.fromEntries(rows.map(r => [r.provider, r.api_key])))
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }
+  useEffect(() => { load() }, [])
+
+  const handleSave = async (provider: string) => {
+    setSaving(s => ({ ...s, [provider]: true }))
+    setError(e => ({ ...e, [provider]: '' }))
+    try {
+      const updated = await api.setUserApiKey(provider, drafts[provider] ?? '')
+      setKeys(prev => prev.map(k => k.provider === provider ? updated : k))
+      setSaved(s => ({ ...s, [provider]: true }))
+      setTimeout(() => setSaved(s => ({ ...s, [provider]: false })), 2000)
+    } catch (err: any) {
+      setError(e => ({ ...e, [provider]: err.message || 'Save failed' }))
+    } finally {
+      setSaving(s => ({ ...s, [provider]: false }))
+    }
+  }
+
+  const handleTest = async (provider: string) => {
+    setTesting(t => ({ ...t, [provider]: true }))
+    setTestResult(r => ({ ...r, [provider]: undefined }))
+    try {
+      const res = await api.testUserApiKey(provider, drafts[provider] ?? '')
+      setTestResult(r => ({ ...r, [provider]: { ok: res.status === 'ok', detail: res.detail } }))
+    } catch (err: any) {
+      setTestResult(r => ({ ...r, [provider]: { ok: false, detail: err.message || 'Test failed' } }))
+    } finally {
+      setTesting(t => ({ ...t, [provider]: false }))
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center gap-2">
+        <h2 className="text-lg font-semibold text-white">User Keys</h2>
+        <HelpButton title="User Keys — How It Works">
+          <p>External API keys for lookup tools (IP reputation, geolocation, etc.) are <span className="text-gray-300 font-medium">personal, not shared</span> — each user stores their own key here under their own account, and only that user's own requests use it. Nobody else, including admins, can see the key's value.</p>
+          <p>Leave a field blank and save to clear a key.</p>
+        </HelpButton>
+      </div>
+      <p className="text-sm text-white">
+        Signed in as <span className="text-white font-medium">{user?.username}</span> — these keys apply to your account only.
+      </p>
+
+      {loading ? (
+        <p className="text-sm text-white">Loading…</p>
+      ) : (
+        <div className="space-y-4 max-w-lg">
+          {keys.map(k => {
+            const isFreeTier = k.provider === 'ipapi_is' && k.free_tier
+            return (
+            <div key={k.provider}>
+              <label className="block text-xs text-white mb-1">{k.label}</label>
+              {k.provider === 'ipapi_is' && (
+                <label className="flex items-center gap-2 text-xs text-white cursor-pointer mb-1.5">
+                  <input
+                    type="checkbox"
+                    checked={k.free_tier}
+                    onChange={e => handleToggleFreeTier(e.target.checked)}
+                    className="accent-blue-600"
+                  />
+                  Use free tier (no key required, ~1,000 lookups/day)
+                </label>
+              )}
+              <div className="flex items-center gap-2">
+                <TextInput
+                  value={drafts[k.provider] ?? ''}
+                  onChange={v => setDrafts(d => ({ ...d, [k.provider]: v }))}
+                  placeholder="Not set"
+                  secret
+                  mono
+                  disabled={isFreeTier}
+                />
+                <button
+                  onClick={() => handleTest(k.provider)}
+                  disabled={isFreeTier || testing[k.provider] || !(drafts[k.provider] ?? '').trim()}
+                  className="shrink-0 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-white text-sm font-medium rounded-lg px-4 py-2 transition-colors disabled:opacity-50"
+                >
+                  {testing[k.provider] ? 'Testing…' : 'Test'}
+                </button>
+                <button
+                  onClick={() => handleSave(k.provider)}
+                  disabled={isFreeTier || saving[k.provider]}
+                  className="shrink-0 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm font-medium rounded-lg px-4 py-2 transition-colors"
+                >
+                  {saving[k.provider] ? 'Saving…' : 'Save'}
+                </button>
+              </div>
+              {saved[k.provider] && <p className="text-xs text-green-400 mt-1">Saved</p>}
+              {error[k.provider] && <p className="text-xs text-red-400 mt-1">{error[k.provider]}</p>}
+              {testResult[k.provider] && (
+                <p className={`text-xs mt-1 ${testResult[k.provider]!.ok ? 'text-green-400' : 'text-red-400'}`}>
+                  {testResult[k.provider]!.ok ? '✓ ' : '✗ '}{testResult[k.provider]!.detail}
+                </p>
+              )}
+              {FIELD_SETS[k.provider] && (
+                <div className="mt-3 pl-1">
+                  <p className="text-xs text-gray-500 mb-1.5">Shown in the IP Lookup modal:</p>
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+                    {FIELD_SETS[k.provider].map(f => (
+                      <label key={f.key} className="flex items-center gap-2 text-xs text-white cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={k.enabled_fields ? k.enabled_fields.includes(f.key) : true}
+                          onChange={e => handleToggleField(k.provider, f.key, e.target.checked)}
+                          className="accent-blue-600"
+                        />
+                        {f.label}
+                      </label>
+                    ))}
+                  </div>
+                  {fieldsError && <p className="text-xs text-red-400 mt-1">{fieldsError}</p>}
+                </div>
+              )}
+            </div>
+          )})}
+        </div>
+      )}
+    </div>
+  )
+}
+// ── End User API Keys ─────────────────────────────────────────────────────────
+
 
 export default function Settings() {
   const { user: me }          = useAuth()
@@ -561,7 +966,7 @@ export default function Settings() {
     setGeneralSaving(true); setGeneralSaved(false); setGeneralError('')
     try {
       const subset: Settings = {}
-      for (const k of ['app_name', 'base_url', 'timezone', 'agent_checkin_interval_sec']) if (k in settings) subset[k] = settings[k]
+      for (const k of ['app_name', 'base_url', 'timezone', 'agent_checkin_interval_sec', 'alert_host_down_enabled']) if (k in settings) subset[k] = settings[k]
       await api.bulkUpdateSettings(subset)
       await api.setPort(portValue)
       await load()
@@ -756,6 +1161,9 @@ export default function Settings() {
               <NumberInput value={num('agent_checkin_interval_sec', 60)} onChange={v => set('agent_checkin_interval_sec', v)} min={15} max={3600} />
               <span className="text-sm text-white">seconds</span>
             </div>
+          </Field>
+          <Field label="Host down alerts" hint="Fire an alert when a node stops checking in. Turn off if your fleet includes laptops/desktops that sleep or shut down normally — also clears any host-down alerts currently open.">
+            <Toggle value={bool('alert_host_down_enabled', true)} onChange={v => set('alert_host_down_enabled', v)} />
           </Field>
           <RestartServiceRow />
         </Section>
@@ -1209,6 +1617,12 @@ export default function Settings() {
           )}
         </Section>
       )}
+
+      {/* Groups */}
+      {tab === 'groups' && <GroupsTab />}
+
+      {/* User Keys */}
+      {tab === 'apikeys' && <ApiKeysTab />}
     </div>
   )
 }
