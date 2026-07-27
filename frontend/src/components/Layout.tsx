@@ -75,7 +75,7 @@ const NAV = [
   { to: '/nodes',       label: 'Nodes',      icon: '⬡', adminOnly: false },
   { to: '/enrollment',  label: 'Enrollment', icon: '⚷', adminOnly: true, gapAfter: true },
   { to: '/alerts',      label: 'Alerts',     icon: '△', adminOnly: false },
-  { to: '/logs',        label: 'Logs',       icon: '▤', adminOnly: false },
+  { to: '/logs',        label: 'Logs',       icon: '▤', adminOnly: false, gapAfter: true },
   { to: '/settings',    label: 'Settings',   icon: '⚙', adminOnly: true },
 ]
 
@@ -176,7 +176,7 @@ export default function Layout({ children }: { children: ReactNode }) {
                   </span>
                 )}
               </NavLink>
-              {gapAfter && <div className="h-px bg-gray-700 mx-2 my-1.5" />}
+              {gapAfter && <div className="h-0.5 bg-gray-600 mx-2 my-1.5 rounded-full" />}
             </Fragment>
           ))}
         </nav>
