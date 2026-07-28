@@ -95,6 +95,9 @@ DEFAULTS: dict[str, Any] = {
     "backup_interval_hours": 24,
     "backup_rotation_count": 5,
     "backup_path": str(Path(get_settings().install_dir) / "backups"),
+
+    # Set by pktHub on register/deregister via /api/suite/settings-lock — not user-editable.
+    "hub_settings_managed": False,
 }
 
 
