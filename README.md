@@ -29,6 +29,7 @@ whoever's logged into the machine (via a tray/menu-bar helper).
 - [Roles & Auth](#roles--auth)
 - [IP Intelligence Lookup](#ip-intelligence-lookup)
 - [Alerting](#alerting)
+- [Logs](#logs)
 - [Suite Integration](#suite-integration)
 - [Backup & Restore](#backup--restore)
 - [Troubleshooting](#troubleshooting)
@@ -145,6 +146,8 @@ itself.
 - **Enrollment** (`/enrollment`, admin only) — its own top-level nav item,
   not under Settings — issue and manage enrollment tokens (see
   [Enrolling a node](#enrolling-a-node)).
+- **Logs** (`/logs`) — the server's own application log, in-app rather than
+  SSH+`journalctl` (see [Logs](#logs) below).
 
 ## Agent
 
@@ -461,6 +464,34 @@ hidden in the UI.
 - **Deleting a group** strips it from every device currently in it and
   drops whatever alert overrides were set for it.
 
+## Logs
+
+The **Logs** page (`/logs`, any role) is an in-app viewer for pktNode's own
+application log — `GET /api/logs`, backed by a `app_logs` SQLite table fed
+by a logging handler (`app/logging_handler.py`) attached to the root
+logger, not a raw `journalctl`/log-file tail.
+
+- **Filters**: minimum level (ALL/DEBUG/INFO/WARNING/ERROR/CRITICAL),
+  logger-name prefix, free-text search over the message, and a time
+  window — quick presets (1h/6h/24h/7d/30d/all time) or a custom
+  from/to range, with both sides clamped so a future timestamp can't be
+  picked and an invalid (end-before-start) range is rejected inline
+  rather than silently applied.
+- **Stats** (`GET /api/logs/stats`): total record count, a count per
+  level, the distinct set of logger names seen, and the most recent
+  timestamp — used to populate the page's summary tiles and the logger
+  filter's options.
+- **Capture level** (admin only, `POST /api/logs/level`): sets the
+  minimum level the root logger actually persists to `app_logs` at
+  runtime (default `WARNING`) — lowering it to `INFO`/`DEBUG` surfaces
+  more detail for active troubleshooting without a restart or a config
+  file edit; the dropdown reflects the level currently in effect.
+- **Clear** (admin only, `DELETE /api/logs`): wipes every stored log
+  record.
+- Results are paginated with a page-size selector (25/50/75/100), shared
+  with the same control on the Alerts and Node Detail (Commands/Metrics)
+  tables.
+
 ## Suite Integration
 
 pktNode exposes `/api/suite/*` for pktHub to call in (inbound), same
@@ -471,9 +502,14 @@ Settings → Security → Suite Integration.
 
 Settings → Data → Backups: scheduled or on-demand snapshots (SQLite DB +
 `config.yaml`) with rotation, plus a one-off export/import bundle
-(`.tar.gz`). A restore requires a service restart to pick up `config.yaml`
-changes. Existing agents keep working against a restored server unchanged,
-since their bearer tokens live in the restored DB.
+(`.tar.gz`). Each listed snapshot has a **Restore…** link that restores
+directly from that on-server snapshot — no download/upload round trip
+required — and lets you pick just `pktnode.db` or just `config.yaml`
+instead of always restoring both together; the same per-file selection is
+available on the bundle-upload restore. A restore requires a service
+restart to pick up `config.yaml` changes. Existing agents keep working
+against a restored server unchanged, since their bearer tokens live in the
+restored DB.
 
 ## Troubleshooting
 
