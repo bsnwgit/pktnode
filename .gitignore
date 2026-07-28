@@ -32,6 +32,8 @@ venv.bak/
 config.yaml
 # SQLite databases
 *.db
+*.db-shm
+*.db-wal
 # DuckDB databases
 *.duckdb
 *.duckdb.wal

@@ -196,5 +196,5 @@ fi
 echo "Next steps:"
 echo "  1. Open the firewall for TCP $PORT"
 echo "  2. Log in and change the admin password in Settings → Users"
-echo "  3. Create an enrollment token in Settings → Enrollment and install the"
+echo "  3. Create an enrollment token in Enrollment (top-level nav) and install the"
 echo "     agent on your first managed endpoint"
