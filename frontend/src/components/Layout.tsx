@@ -120,14 +120,17 @@ function AutoRefreshControl() {
   )
 }
 
-export default function Layout({ children }: { children: ReactNode }) {
+export default function Layout({ children, chromeless = false }: { children: ReactNode; chromeless?: boolean }) {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
   const [unacked, setUnacked] = useState<number>(0)
   const [showChangePw, setShowChangePw] = useState(false)
 
-  // Poll for unresolved+unacked alert count every 30s
+  // Poll for unresolved+unacked alert count every 30s — skipped entirely
+  // when chromeless (embedded, badge is never shown) rather than gated
+  // inside the effect, so this hook still runs in a stable order either way.
   useEffect(() => {
+    if (chromeless) return
     const tick = async () => {
       try {
         const events = await api.getAlertEvents({ active: true, acked: false, limit: 500 })
@@ -146,12 +149,25 @@ export default function Layout({ children }: { children: ReactNode }) {
     navigate('/login')
   }
 
+  // Chromeless: embedded via pkthub's remote-settings iframe — no sidebar,
+  // no header, just the page content. Still wrapped in AutoRefreshProvider
+  // since Settings.tsx (and others) call useAutoRefresh().
+  if (chromeless) {
+    return (
+      <AutoRefreshProvider>
+        <div className="bg-gray-950 text-white min-h-screen p-5">
+          {children}
+        </div>
+      </AutoRefreshProvider>
+    )
+  }
+
   return (
     <AutoRefreshProvider>
     <div className="flex h-screen bg-gray-950 text-white overflow-hidden">
       <aside className="w-52 flex-shrink-0 bg-gray-900 border-r border-gray-800 flex flex-col">
         <div className="flex items-center gap-3 px-3 py-3 border-b border-gray-800">
-          <img src="/icon-128.png" alt="" className="w-12 h-12 rounded-md" />
+          <img src="icon-128.png" alt="" className="w-12 h-12 rounded-md" />
           <span className="text-xl font-bold tracking-wide text-white">pktNode</span>
         </div>
 
