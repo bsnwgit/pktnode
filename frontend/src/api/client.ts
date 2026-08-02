@@ -148,6 +148,12 @@ export const api = {
   getSuiteToken: () =>
     request<{ suite_token: string; has_token: boolean }>('/suite/token'),
 
+  getSystemInfo: () =>
+    request<{
+      app_name: string; version: string; install_dir: string
+      github: string; license: string; developer: string; contact: string
+    }>('/system/info'),
+
   restartService: () =>
     request<{ status: string; message: string }>('/system/restart', { method: 'POST' }),
   getPort: () =>
