@@ -1,6 +1,6 @@
 """
 GET/PUT /api/user-api-keys — per-user external API keys (AbuseIPDB, etc.)
-for the IP Info / Reputation Lookup feature.
+for IP reputation lookups.
 
 Every authenticated user manages only their own keys, scoped by username —
 there is no admin-wide view or override here.
@@ -24,6 +24,7 @@ _TEST_IP = "8.8.8.8"
 
 router = APIRouter()
 
+# Providers this app knows how to use.
 SUPPORTED_PROVIDERS: dict[str, str] = {
     "abuseipdb":      "AbuseIPDB",
     "ipqualityscore": "IPQualityScore",
@@ -58,6 +59,7 @@ class ApiKeyOut(BaseModel):
     updated_at: str | None = None
     enabled_fields: list[str] | None = None  # ipinfo/ipapi_is/mxtoolbox only; None = not customized (all shown)
     free_tier: bool = False  # ipapi_is only — use its keyless free tier instead of api_key
+    enabled: bool = True  # ipinfo/ipapi_is/abuseipdb/mxtoolbox only — show this provider's section in the IP Lookup modal at all
 
 
 class ApiKeyIn(BaseModel):
@@ -72,12 +74,16 @@ class FreeTierIn(BaseModel):
     free_tier: bool
 
 
+class EnabledIn(BaseModel):
+    enabled: bool
+
+
 @router.get("", response_model=list[ApiKeyOut])
 async def list_api_keys(user: CurrentUser):
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            "SELECT provider, api_key, updated_at, enabled_fields, free_tier FROM user_api_keys WHERE username = ?",
+            "SELECT provider, api_key, updated_at, enabled_fields, free_tier, enabled FROM user_api_keys WHERE username = ?",
             (user["username"],),
         ) as cur:
             rows = {r["provider"]: r for r in await cur.fetchall()}
@@ -90,9 +96,42 @@ async def list_api_keys(user: CurrentUser):
             updated_at=rows[provider]["updated_at"] if provider in rows else None,
             enabled_fields=json.loads(rows[provider]["enabled_fields"]) if provider in rows and rows[provider]["enabled_fields"] else None,
             free_tier=bool(rows[provider]["free_tier"]) if provider in rows else False,
+            enabled=bool(rows[provider]["enabled"]) if provider in rows else True,
         )
         for provider, label in SUPPORTED_PROVIDERS.items()
     ]
+
+
+@router.put("/{provider}/enabled", response_model=ApiKeyOut)
+async def set_provider_enabled(provider: str, body: EnabledIn, user: CurrentUser):
+    if provider not in SUPPORTED_PROVIDERS:
+        raise HTTPException(status_code=404, detail=f"Unknown provider: {provider}")
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        await db.execute(
+            """INSERT INTO user_api_keys (username, provider, enabled, updated_at)
+               VALUES (?, ?, ?, datetime('now'))
+               ON CONFLICT (username, provider)
+               DO UPDATE SET enabled = excluded.enabled, updated_at = excluded.updated_at""",
+            (user["username"], provider, int(body.enabled)),
+        )
+        await db.commit()
+        async with db.execute(
+            "SELECT api_key, updated_at, enabled_fields, free_tier, enabled FROM user_api_keys WHERE username = ? AND provider = ?",
+            (user["username"], provider),
+        ) as cur:
+            row = await cur.fetchone()
+
+    return ApiKeyOut(
+        provider=provider,
+        label=SUPPORTED_PROVIDERS[provider],
+        api_key=row["api_key"],
+        updated_at=row["updated_at"],
+        enabled_fields=json.loads(row["enabled_fields"]) if row["enabled_fields"] else None,
+        free_tier=bool(row["free_tier"]),
+        enabled=bool(row["enabled"]),
+    )
 
 
 @router.put("/ipapi_is/free-tier", response_model=ApiKeyOut)
@@ -108,7 +147,7 @@ async def set_ipapi_is_free_tier(body: FreeTierIn, user: CurrentUser):
         )
         await db.commit()
         async with db.execute(
-            "SELECT api_key, updated_at, enabled_fields, free_tier FROM user_api_keys WHERE username = ? AND provider = 'ipapi_is'",
+            "SELECT api_key, updated_at, enabled_fields, free_tier, enabled FROM user_api_keys WHERE username = ? AND provider = 'ipapi_is'",
             (user["username"],),
         ) as cur:
             row = await cur.fetchone()
@@ -120,6 +159,7 @@ async def set_ipapi_is_free_tier(body: FreeTierIn, user: CurrentUser):
         updated_at=row["updated_at"],
         enabled_fields=json.loads(row["enabled_fields"]) if row["enabled_fields"] else None,
         free_tier=bool(row["free_tier"]),
+        enabled=bool(row["enabled"]),
     )
 
 
@@ -140,7 +180,7 @@ async def set_ipinfo_fields(body: FieldsIn, user: CurrentUser):
         )
         await db.commit()
         async with db.execute(
-            "SELECT api_key, updated_at, enabled_fields FROM user_api_keys WHERE username = ? AND provider = 'ipinfo'",
+            "SELECT api_key, updated_at, enabled_fields, enabled FROM user_api_keys WHERE username = ? AND provider = 'ipinfo'",
             (user["username"],),
         ) as cur:
             row = await cur.fetchone()
@@ -151,6 +191,7 @@ async def set_ipinfo_fields(body: FieldsIn, user: CurrentUser):
         api_key=row["api_key"],
         updated_at=row["updated_at"],
         enabled_fields=json.loads(row["enabled_fields"]) if row["enabled_fields"] else None,
+        enabled=bool(row["enabled"]),
     )
 
 
@@ -171,7 +212,7 @@ async def set_ipapi_is_fields(body: FieldsIn, user: CurrentUser):
         )
         await db.commit()
         async with db.execute(
-            "SELECT api_key, updated_at, enabled_fields FROM user_api_keys WHERE username = ? AND provider = 'ipapi_is'",
+            "SELECT api_key, updated_at, enabled_fields, free_tier, enabled FROM user_api_keys WHERE username = ? AND provider = 'ipapi_is'",
             (user["username"],),
         ) as cur:
             row = await cur.fetchone()
@@ -182,6 +223,8 @@ async def set_ipapi_is_fields(body: FieldsIn, user: CurrentUser):
         api_key=row["api_key"],
         updated_at=row["updated_at"],
         enabled_fields=json.loads(row["enabled_fields"]) if row["enabled_fields"] else None,
+        free_tier=bool(row["free_tier"]),
+        enabled=bool(row["enabled"]),
     )
 
 
@@ -202,7 +245,7 @@ async def set_mxtoolbox_fields(body: FieldsIn, user: CurrentUser):
         )
         await db.commit()
         async with db.execute(
-            "SELECT api_key, updated_at, enabled_fields FROM user_api_keys WHERE username = ? AND provider = 'mxtoolbox'",
+            "SELECT api_key, updated_at, enabled_fields, enabled FROM user_api_keys WHERE username = ? AND provider = 'mxtoolbox'",
             (user["username"],),
         ) as cur:
             row = await cur.fetchone()
@@ -213,6 +256,7 @@ async def set_mxtoolbox_fields(body: FieldsIn, user: CurrentUser):
         api_key=row["api_key"],
         updated_at=row["updated_at"],
         enabled_fields=json.loads(row["enabled_fields"]) if row["enabled_fields"] else None,
+        enabled=bool(row["enabled"]),
     )
 
 
@@ -223,6 +267,7 @@ async def set_api_key(provider: str, body: ApiKeyIn, user: CurrentUser):
 
     key = body.api_key.strip()
     async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
         if key:
             await db.execute(
                 """INSERT INTO user_api_keys (username, provider, api_key, updated_at)
@@ -232,17 +277,39 @@ async def set_api_key(provider: str, body: ApiKeyIn, user: CurrentUser):
                 (user["username"], provider, key),
             )
         else:
+            # Empty key means "clear" the key — but keep the row (if it
+            # exists) rather than deleting it outright, so any other stored
+            # preference for this provider (enabled/enabled_fields/free_tier)
+            # survives clearing/re-saving a blank key.
             await db.execute(
-                "DELETE FROM user_api_keys WHERE username = ? AND provider = ?",
+                """INSERT INTO user_api_keys (username, provider, api_key, updated_at)
+                   VALUES (?, ?, '', datetime('now'))
+                   ON CONFLICT (username, provider)
+                   DO UPDATE SET api_key = '', updated_at = excluded.updated_at""",
                 (user["username"], provider),
             )
         await db.commit()
+        async with db.execute(
+            "SELECT enabled_fields, free_tier, enabled FROM user_api_keys WHERE username = ? AND provider = ?",
+            (user["username"], provider),
+        ) as cur:
+            row = await cur.fetchone()
 
-    return ApiKeyOut(provider=provider, label=SUPPORTED_PROVIDERS[provider], api_key=key)
+    return ApiKeyOut(
+        provider=provider,
+        label=SUPPORTED_PROVIDERS[provider],
+        api_key=key,
+        enabled_fields=json.loads(row["enabled_fields"]) if row and row["enabled_fields"] else None,
+        free_tier=bool(row["free_tier"]) if row else False,
+        enabled=bool(row["enabled"]) if row else True,
+    )
 
 
 @router.post("/{provider}/test")
 async def test_api_key(provider: str, body: ApiKeyIn, _: CurrentUser) -> dict:
+    """Exercise the given key against the provider's real API with a harmless
+    test IP. Tests whatever key is passed in — not necessarily saved yet —
+    so a user can validate before committing."""
     if provider not in SUPPORTED_PROVIDERS:
         raise HTTPException(status_code=404, detail=f"Unknown provider: {provider}")
 
