@@ -194,6 +194,11 @@ export const api = {
     return { blob, filename }
   },
 
+  // ── Documentation ─────────────────────────────────────────────────────────
+  getDocs: () => request<{ slug: string; title: string }[]>('/docs-content'),
+  getDoc: (slug: string) =>
+    request<{ slug: string; title: string; content: string }>(`/docs-content/${slug}`),
+
   // ── SSL ───────────────────────────────────────────────────────────────────
   getSslStatus: () => request<SslStatus>('/system/ssl/status'),
   uploadSsl: async (cert: File, key: File): Promise<SslStatus> => {
