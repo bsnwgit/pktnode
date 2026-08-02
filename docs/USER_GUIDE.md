@@ -49,6 +49,10 @@ The server's own application log, browsable in-app.
 
 Any IP shown in the app is clickable, opening a lookup using your own per-user API keys (Settings → User Keys).
 
+## Getting help in the app
+
+Click **Documentation** in the sidebar (just above your account info) to open this guide and the Administrator Guide as in-app tabs, so you don't need the repo checked out to read them.
+
 ## The tray icon (if installed on your machine)
 
 If you're a regular user on a managed machine (not an admin operating pktNode), you may see a small pktNode icon in your menu bar or system tray. It shows whether the agent is checking in successfully and the configured server URL — it has no shortcut into the admin web UI, and it's not something you interact with day-to-day beyond receiving the occasional native OS dialog if an admin sends you a message.

@@ -65,6 +65,7 @@ if [ "$REPO_DIR" = "$INSTALL_DIR" ]; then
 else
     cp -r "$REPO_DIR/app"        "$INSTALL_DIR/"
     cp -r "$REPO_DIR/migrations" "$INSTALL_DIR/"
+    cp -r "$REPO_DIR/docs"       "$INSTALL_DIR/"
 fi
 
 # ── 5. Configure ──────────────────────────────────────────────────────────────
