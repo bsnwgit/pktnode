@@ -11,6 +11,7 @@ const Settings   = lazy(() => import('./pages/Settings'))
 const Nodes      = lazy(() => import('./pages/Nodes'))
 const NodeDetail = lazy(() => import('./pages/NodeDetail'))
 const Enrollment = lazy(() => import('./pages/Enrollment'))
+const Documentation = lazy(() => import('./pages/Documentation'))
 
 function PageFallback() {
   return <div className="flex items-center justify-center h-48 text-white">Loading…</div>
@@ -82,6 +83,11 @@ export default function App() {
             <AdminRoute>
               <Suspense fallback={<PageFallback />}><Settings /></Suspense>
             </AdminRoute>
+          } />
+          <Route path="/documentation" element={
+            <ProtectedRoute>
+              <Suspense fallback={<PageFallback />}><Documentation /></Suspense>
+            </ProtectedRoute>
           } />
           <Route path="/users" element={<Navigate to="/settings" replace />} />
           <Route path="/decommissioned" element={<Navigate to="/nodes?status=decommissioned" replace />} />

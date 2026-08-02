@@ -34,6 +34,7 @@ from app.api import ip_info as ip_info_router
 from app.api import mxtoolbox as mxtoolbox_router
 from app.api import groups as groups_router
 from app.api import widgets as widgets_router
+from app.api import docs as docs_router
 
 settings = get_settings()
 log = logging.getLogger("pktnode")
@@ -127,6 +128,7 @@ app.include_router(ip_info_router.router,   prefix="/api/ip-info",      tags=["i
 app.include_router(mxtoolbox_router.router, prefix="/api/mxtoolbox",    tags=["mxtoolbox"])
 app.include_router(groups_router.router,    prefix="/api/groups",       tags=["groups"])
 app.include_router(widgets_router.router,   prefix="/api/widgets",      tags=["widgets"])
+app.include_router(docs_router.router,      prefix="/api/docs-content", tags=["docs"])
 
 # ── Health check ──────────────────────────────────────────────────────────────
 
