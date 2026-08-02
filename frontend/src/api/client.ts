@@ -315,6 +315,8 @@ export const api = {
     request<UserApiKey>('/user-api-keys/ipapi_is/free-tier', { method: 'PUT', body: JSON.stringify({ free_tier }) }),
   setMxtoolboxFields: (enabled_fields: string[]) =>
     request<UserApiKey>('/user-api-keys/mxtoolbox/fields', { method: 'PUT', body: JSON.stringify({ enabled_fields }) }),
+  setProviderEnabled: (provider: string, enabled: boolean) =>
+    request<UserApiKey>(`/user-api-keys/${provider}/enabled`, { method: 'PUT', body: JSON.stringify({ enabled }) }),
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -326,6 +328,7 @@ export interface UserApiKey {
   updated_at: string | null
   enabled_fields: string[] | null // ipinfo/ipapi_is/mxtoolbox only; null = not customized (all shown)
   free_tier: boolean // ipapi_is only — use its keyless free tier instead of api_key
+  enabled: boolean // ipinfo/ipapi_is/abuseipdb/mxtoolbox only — show this provider's section in the IP Lookup modal at all
 }
 
 export interface GroupOverride {
