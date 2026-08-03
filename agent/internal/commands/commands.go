@@ -1,13 +1,18 @@
 // Package commands executes remote actions queued by the server
-// (restart_service, kill_process, run_script, reboot, shutdown) and
-// reports back an exit code + captured output. Each OS implements
-// execRestartService/execKillProcess/execRunScript/execReboot/execShutdown
-// in its own build-tagged file.
+// (restart_service, kill_process, run_script, reboot, shutdown,
+// run_speedtest) and reports back an exit code + captured output. Each OS
+// implements execRestartService/execKillProcess/execRunScript/execReboot/
+// execShutdown in its own build-tagged file.
 package commands
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+
+	"pktnode-agent/internal/inventory"
+	"pktnode-agent/internal/speedtest"
 )
 
 type Result struct {
@@ -82,6 +87,20 @@ func Execute(commandType string, rawPayload json.RawMessage) Result {
 			return failed(fmt.Errorf("%w: %s", err, out))
 		}
 		return completed(out)
+
+	case "run_speedtest":
+		res, err := speedtest.Run(context.Background(), inventory.AgentVersion)
+		if err != nil {
+			if errors.Is(err, speedtest.ErrAlreadyRunning) {
+				return failed(err)
+			}
+			return failed(err)
+		}
+		out, _ := json.Marshal(res)
+		if res.Status != "completed" {
+			return Result{Status: "failed", ExitCode: 1, Output: string(out)}
+		}
+		return Result{Status: "completed", ExitCode: 0, Output: string(out)}
 
 	default:
 		return failed(fmt.Errorf("unknown command_type: %s", commandType))

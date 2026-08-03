@@ -20,7 +20,7 @@ The full inventory. Filter by status (All/Online/Offline/Stale/Pending/Decommiss
 
 ### Node detail
 
-Click any node for tabs covering Overview (hardware, IP, current logged-in user, network interfaces, group membership), Software (installed packages), Processes (running processes, with a per-row **Kill** action), Security (listening ports and the host's firewall status — see below), Metrics (CPU/mem/disk history), Commands (remote-action history), and Messages (chat with whoever's logged into the node).
+Click any node for tabs covering Overview (hardware, IP, current logged-in user, network interfaces, group membership), Software (installed packages), Processes (running processes, with a per-row **Kill** action), Security (listening ports and the host's firewall status — see below), Metrics (CPU/mem/disk history), Commands (remote-action history), Speedtest (download/upload/latency history — see below), and Messages (chat with whoever's logged into the node).
 
 Admins and analysts get two action buttons:
 
@@ -32,6 +32,10 @@ Admins additionally get **Override Code** (for locally stopping/uninstalling the
 ### Security tab
 
 Shows the node's currently listening TCP/UDP ports (with the owning process where known) and a firewall status badge (Enabled/Disabled/Unknown). This is collected the same way as Software/Processes — refreshed on the node's periodic full-inventory check-in, not live. A node showing no data here either hasn't reported a full inventory yet, or is still running an older agent build from before this feature existed — see your admin about reinstalling the agent on it.
+
+### Speedtest tab
+
+Runs a real download/upload/latency test on the node via M-Lab's NDT7 network — no setup or API key required. Click **Run Speedtest Now** to fire one off; it queues like a remote action and moves from pending to completed on the node's next check-in (up to about a minute), then appears at the top of the results table below. If an admin has enabled a speedtest schedule, you'll also see periodic runs show up here on their own with no action from you. Only one test can run on a node at a time — trying to start one while another is already running is rejected rather than queued.
 
 ### Messaging a node
 
