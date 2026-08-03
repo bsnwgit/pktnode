@@ -20,7 +20,7 @@ The full inventory. Filter by status (All/Online/Offline/Stale/Pending/Decommiss
 
 ### Node detail
 
-Click any node for tabs covering Overview (hardware, IP, current logged-in user, network interfaces, group membership), Software (installed packages), Processes (running processes, with a per-row **Kill** action), Metrics (CPU/mem/disk history), Commands (remote-action history), and Messages (chat with whoever's logged into the node).
+Click any node for tabs covering Overview (hardware, IP, current logged-in user, network interfaces, group membership), Software (installed packages), Processes (running processes, with a per-row **Kill** action), Security (listening ports and the host's firewall status — see below), Metrics (CPU/mem/disk history), Commands (remote-action history), and Messages (chat with whoever's logged into the node).
 
 Admins and analysts get two action buttons:
 
@@ -28,6 +28,10 @@ Admins and analysts get two action buttons:
 - **Queue Command** — fire a fixed remote action (Restart service, Kill process, Reboot node, Shutdown node) and watch it move from pending → sent → completed/failed live in the same modal. Every queued command lands in the Commands tab too. Commands are picked up on the node's next check-in, so expect up to about a minute of latency — this isn't instant like Live Terminal.
 
 Admins additionally get **Override Code** (for locally stopping/uninstalling the agent on that machine — see your admin if you need this) and decommission/delete actions.
+
+### Security tab
+
+Shows the node's currently listening TCP/UDP ports (with the owning process where known) and a firewall status badge (Enabled/Disabled/Unknown). This is collected the same way as Software/Processes — refreshed on the node's periodic full-inventory check-in, not live. A node showing no data here either hasn't reported a full inventory yet, or is still running an older agent build from before this feature existed — see your admin about reinstalling the agent on it.
 
 ### Messaging a node
 
