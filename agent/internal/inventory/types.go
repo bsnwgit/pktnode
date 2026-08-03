@@ -27,6 +27,11 @@ type Snapshot struct {
 	Software      []SoftwareItem `json:"software"`
 	Processes     []ProcessItem  `json:"processes"`
 	Interfaces    []Interface    `json:"interfaces"`
+	Ports         []PortItem     `json:"ports"`
+
+	// FirewallStatus is one of "enabled", "disabled", or "unknown" (detection
+	// not implemented/failed for this OS). Best-effort — see firewall_<os>.go.
+	FirewallStatus string `json:"firewall_status"`
 
 	// HasTray is set by the caller (agentloop), not Collect itself —
 	// inventory doesn't import svcinstall. True only if the status-icon
@@ -48,6 +53,13 @@ type ProcessItem struct {
 	CPUPct   float64 `json:"cpu_pct"`
 	MemMB    float64 `json:"mem_mb"`
 	Username string  `json:"username"`
+}
+
+type PortItem struct {
+	Protocol    string `json:"protocol"` // tcp | udp
+	Port        int    `json:"port"`
+	ProcessName string `json:"process_name"`
+	PID         int32  `json:"pid"`
 }
 
 type Interface struct {
