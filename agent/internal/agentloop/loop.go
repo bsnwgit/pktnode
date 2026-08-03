@@ -4,6 +4,7 @@
 package agentloop
 
 import (
+	"context"
 	"crypto/rand"
 	"fmt"
 	"log"
@@ -14,6 +15,7 @@ import (
 	"pktnode-agent/internal/commands"
 	"pktnode-agent/internal/config"
 	"pktnode-agent/internal/inventory"
+	"pktnode-agent/internal/speedtest"
 	"pktnode-agent/internal/svcinstall"
 	"pktnode-agent/internal/terminal"
 	"pktnode-agent/internal/totp"
@@ -206,6 +208,9 @@ func checkinOnce(client *apiclient.Client, cfg *config.Config, fullInventory boo
 		}
 	}
 
+	cfg.SpeedtestIntervalSec = resp.SpeedtestIntervalSec
+	maybeRunScheduledSpeedtest(client, cfg)
+
 	if len(resp.Messages) > 0 {
 		msgs := make([]config.IncomingMessage, len(resp.Messages))
 		for i, m := range resp.Messages {
@@ -214,5 +219,43 @@ func checkinOnce(client *apiclient.Client, cfg *config.Config, fullInventory boo
 		if err := config.WriteIncomingMessages(msgs); err != nil {
 			log.Printf("failed to hand messages to tray: %v", err)
 		}
+	}
+}
+
+// maybeRunScheduledSpeedtest runs a speed test if the server-configured
+// interval has elapsed since the last one (manual or scheduled) on this
+// node. Runs inline on the check-in goroutine, same as queued commands —
+// a speed test takes well under a minute, and check-in cadence is normally
+// far shorter than any sane speedtest interval, so this never meaningfully
+// delays the next cycle. If a manually-queued speed test is already in
+// flight, speedtest.Run returns ErrAlreadyRunning and this cycle is simply
+// skipped; the next check-in tries again.
+func maybeRunScheduledSpeedtest(client *apiclient.Client, cfg *config.Config) {
+	if cfg.SpeedtestIntervalSec <= 0 {
+		return
+	}
+	if cfg.LastSpeedtestAt != "" {
+		last, err := time.Parse(time.RFC3339, cfg.LastSpeedtestAt)
+		if err == nil && time.Since(last) < time.Duration(cfg.SpeedtestIntervalSec)*time.Second {
+			return
+		}
+	}
+
+	res, err := speedtest.Run(context.Background(), inventory.AgentVersion)
+	if err != nil {
+		return
+	}
+
+	cfg.LastSpeedtestAt = time.Now().UTC().Format(time.RFC3339)
+	if saveErr := config.Save(cfg); saveErr != nil {
+		log.Printf("failed to persist last-speedtest time: %v", saveErr)
+	}
+
+	if err := client.ReportSpeedtestResult(apiclient.SpeedtestResult{
+		Status: res.Status, DownloadMbps: res.DownloadMbps, UploadMbps: res.UploadMbps,
+		LatencyMs: res.LatencyMs, JitterMs: res.JitterMs, ServerFQDN: res.ServerFQDN,
+		Error: res.Error, TriggeredBy: "scheduled",
+	}); err != nil {
+		log.Printf("failed to report scheduled speedtest result: %v", err)
 	}
 }

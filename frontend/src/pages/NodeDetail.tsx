@@ -7,7 +7,7 @@ import {
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
-import { api, terminalWsUrl, NodeDetail as NodeDetailType, CommandRecord, NodeMessage, GroupInfo } from '../api/client'
+import { api, terminalWsUrl, NodeDetail as NodeDetailType, CommandRecord, NodeMessage, GroupInfo, SpeedtestResult } from '../api/client'
 import { useAuth } from '../store/auth'
 import HelpButton from '../components/HelpButton'
 
@@ -87,7 +87,7 @@ function fmtTime(ts: string | null): string {
   return new Date(toUtc(ts)).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })
 }
 
-type Tab = 'overview' | 'software' | 'processes' | 'security' | 'metrics' | 'commands' | 'messages'
+type Tab = 'overview' | 'software' | 'processes' | 'security' | 'metrics' | 'commands' | 'speedtest' | 'messages'
 
 const FIREWALL_STYLES: Record<string, string> = {
   enabled:  'bg-green-900/40 text-green-400 border border-green-700/40',
@@ -458,6 +458,7 @@ export default function NodeDetail() {
   const canAct = user?.role === 'admin' || user?.role === 'analyst'
   const [node, setNode] = useState<NodeDetailType | null>(null)
   const [commands, setCommands] = useState<CommandRecord[]>([])
+  const [speedtests, setSpeedtests] = useState<SpeedtestResult[]>([])
   const [tab, setTabState] = useState<Tab>('overview')
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
@@ -484,6 +485,7 @@ export default function NodeDetail() {
       setNode(n)
       setDisplayName(n.display_name || '')
       setCommands(await api.getNodeCommands(Number(id)))
+      setSpeedtests(await api.getNodeSpeedtests(Number(id)))
       setMessages(await api.getNodeMessages(Number(id)))
     } finally {
       setLoading(false)
@@ -491,6 +493,20 @@ export default function NodeDetail() {
   }
 
   useEffect(() => { load() }, [id])
+
+  // A speed test only resolves on the node's next check-in (same as any
+  // other queued command) — poll both the command and the results table
+  // while one's in flight so "Run Speedtest Now" updates in place instead
+  // of requiring a manual refresh.
+  useEffect(() => {
+    if (tab !== 'speedtest' || !id) return
+    if (!commands.some(c => c.command_type === 'run_speedtest' && isInFlight(c))) return
+    const poll = setInterval(async () => {
+      setCommands(await api.getNodeCommands(Number(id)))
+      setSpeedtests(await api.getNodeSpeedtests(Number(id)))
+    }, 3000)
+    return () => clearInterval(poll)
+  }, [tab, id, commands])
 
   // Messages come back via the node's own check-in interval (no push
   // channel), so poll quietly while this tab is open to pick up replies —
@@ -587,6 +603,18 @@ export default function NodeDetail() {
     setCommands(await api.getNodeCommands(Number(id)))
   }
 
+  const [queuingSpeedtest, setQueuingSpeedtest] = useState(false)
+  const runSpeedtestNow = async () => {
+    if (!id) return
+    setQueuingSpeedtest(true)
+    try {
+      await api.queueCommand(Number(id), 'run_speedtest', {})
+      await refreshCommands()
+    } finally {
+      setQueuingSpeedtest(false)
+    }
+  }
+
   const killProcess = async (pid: number, name: string) => {
     if (!id || !confirm(`Kill process "${name}" (PID ${pid})?\n\nThis runs the next time the node checks in. Killing the wrong process can crash apps or destabilize the machine — make sure that's intended.`)) return
     await api.queueCommand(Number(id), 'kill_process', { pid })
@@ -606,6 +634,7 @@ export default function NodeDetail() {
   const filteredPorts = node.ports.filter(p => matches(p.protocol, p.port, p.process_name, p.pid))
   const filteredMetrics = node.metrics_history.filter(m => matches(fmtTime(m.recorded_at)))
   const filteredCommands = commands.filter(c => matches(c.command_type, c.status, c.created_by, c.result?.output))
+  const filteredSpeedtests = speedtests.filter(s => matches(s.status, s.triggered_by, s.server_fqdn, s.error))
 
   const listForTab: Record<string, unknown[]> = {
     software: filteredSoftware,
@@ -613,6 +642,7 @@ export default function NodeDetail() {
     security: filteredPorts,
     metrics: filteredMetrics,
     commands: filteredCommands,
+    speedtest: filteredSpeedtests,
   }
   const activeList = listForTab[tab]
   const totalPages = activeList ? Math.max(1, Math.ceil(activeList.length / pageSize)) : 1
@@ -622,6 +652,8 @@ export default function NodeDetail() {
   const pagedPorts = filteredPorts.slice(pageStart, pageStart + pageSize)
   const pagedMetrics = filteredMetrics.slice(pageStart, pageStart + pageSize)
   const pagedCommands = filteredCommands.slice(pageStart, pageStart + pageSize)
+  const pagedSpeedtests = filteredSpeedtests.slice(pageStart, pageStart + pageSize)
+  const speedtestRunning = commands.some(c => c.command_type === 'run_speedtest' && isInFlight(c))
 
   return (
     <div className="space-y-4">
@@ -708,7 +740,7 @@ export default function NodeDetail() {
 
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-1 bg-gray-900 border border-gray-800 rounded-xl p-1 w-fit">
-          {(['overview', 'software', 'processes', 'security', 'metrics', 'commands', 'messages'] as Tab[]).map(t => (
+          {(['overview', 'software', 'processes', 'security', 'metrics', 'commands', 'speedtest', 'messages'] as Tab[]).map(t => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -1059,6 +1091,78 @@ export default function NodeDetail() {
               ))}
               {filteredCommands.length === 0 && (
                 <tr><td colSpan={5} className="px-5 py-8 text-center text-sm text-white">{commands.length === 0 ? 'No remote actions queued yet' : 'No commands match your search'}</td></tr>
+              )}
+            </tbody>
+          </table>
+          </div>
+        </div>
+      )}
+
+      {tab === 'speedtest' && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <p className="text-xs text-white">
+              Download/upload/latency measured via M-Lab's NDT7 network — no API key, no bundled binary. Runs on-demand here, plus on a schedule if enabled in Settings.
+            </p>
+            {canAct && (
+              <button
+                onClick={runSpeedtestNow}
+                disabled={queuingSpeedtest || speedtestRunning}
+                className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors disabled:opacity-50 whitespace-nowrap"
+              >
+                {speedtestRunning ? 'Running…' : queuingSpeedtest ? 'Queuing…' : 'Run Speedtest Now'}
+              </button>
+            )}
+          </div>
+          <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+          {filteredSpeedtests.length > 0 && (
+            <div className="flex items-center justify-center gap-6 px-5 py-3 border-b border-gray-800">
+              <Pagination page={page} totalPages={totalPages} onChange={setPage} />
+              <div className="flex items-center gap-2">
+                <label htmlFor="speedtests-per-page" className="text-xs text-white">Results per page:</label>
+                <select
+                  id="speedtests-per-page"
+                  value={pageSize}
+                  onChange={e => changePageSize(Number(e.target.value))}
+                  className="text-sm bg-gray-800 border border-gray-700 text-white rounded-lg px-2 py-1 focus:outline-none focus:border-blue-500"
+                >
+                  {PAGE_SIZE_OPTIONS.map(size => (
+                    <option key={size} value={size}>{size}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          )}
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-gray-800">
+                <th className="px-5 py-3 text-left text-xs font-medium text-white">Status</th>
+                <th className="px-5 py-3 text-left text-xs font-medium text-white">Download</th>
+                <th className="px-5 py-3 text-left text-xs font-medium text-white">Upload</th>
+                <th className="px-5 py-3 text-left text-xs font-medium text-white">Latency</th>
+                <th className="px-5 py-3 text-left text-xs font-medium text-white">Jitter</th>
+                <th className="px-5 py-3 text-left text-xs font-medium text-white">Server</th>
+                <th className="px-5 py-3 text-left text-xs font-medium text-white">Trigger</th>
+                <th className="px-5 py-3 text-left text-xs font-medium text-white">Ran</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-800/50">
+              {pagedSpeedtests.map(s => (
+                <tr key={s.id} className="hover:bg-gray-800/30 transition-colors">
+                  <td className="px-5 py-2.5">
+                    <span className={`text-xs px-2 py-0.5 rounded-full ${COMMAND_STATUS_STYLES[s.status]}`}>{s.status}</span>
+                  </td>
+                  <td className="px-5 py-2.5 text-white text-xs font-mono">{s.download_mbps !== null ? `${s.download_mbps.toFixed(1)} Mbps` : '—'}</td>
+                  <td className="px-5 py-2.5 text-white text-xs font-mono">{s.upload_mbps !== null ? `${s.upload_mbps.toFixed(1)} Mbps` : '—'}</td>
+                  <td className="px-5 py-2.5 text-white text-xs font-mono">{s.latency_ms !== null ? `${s.latency_ms.toFixed(0)} ms` : '—'}</td>
+                  <td className="px-5 py-2.5 text-white text-xs font-mono">{s.jitter_ms !== null ? `${s.jitter_ms.toFixed(0)} ms` : '—'}</td>
+                  <td className="px-5 py-2.5 text-white text-xs max-w-[12rem] truncate" title={s.server_fqdn || s.error || ''}>{s.server_fqdn || s.error || '—'}</td>
+                  <td className="px-5 py-2.5 text-white text-xs capitalize">{s.triggered_by}</td>
+                  <td className="px-5 py-2.5 text-white text-xs">{fmtTime(s.created_at)}</td>
+                </tr>
+              ))}
+              {filteredSpeedtests.length === 0 && (
+                <tr><td colSpan={8} className="px-5 py-8 text-center text-sm text-white">{speedtests.length === 0 ? 'No speed tests run yet' : 'No results match your search'}</td></tr>
               )}
             </tbody>
           </table>

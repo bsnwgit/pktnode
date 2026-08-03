@@ -300,7 +300,7 @@ class CommandIn(BaseModel):
     payload: dict = {}
 
 
-_VALID_COMMAND_TYPES = {"restart_service", "kill_process", "run_script", "reboot", "shutdown"}
+_VALID_COMMAND_TYPES = {"restart_service", "kill_process", "run_script", "reboot", "shutdown", "run_speedtest"}
 
 
 @router.get("/{node_id}/commands")
@@ -351,6 +351,24 @@ async def queue_command(node_id: int, body: CommandIn, user: AnalystUser, db: Db
         command_id = cur.lastrowid
     await db.commit()
     return {"id": command_id, "status": "pending"}
+
+
+@router.get("/{node_id}/speedtest-results")
+async def list_speedtest_results(node_id: int, _: CurrentUser, db: DbDep) -> list[dict]:
+    db.row_factory = aiosqlite.Row
+    async with db.execute(
+        """
+        SELECT id, status, download_mbps, upload_mbps, latency_ms, jitter_ms,
+               server_fqdn, error, triggered_by, created_at
+        FROM speedtest_results
+        WHERE node_id = ?
+        ORDER BY created_at DESC
+        LIMIT 200
+        """,
+        (node_id,),
+    ) as cur:
+        rows = await cur.fetchall()
+    return [dict(r) for r in rows]
 
 
 # ── Messages (2-way chat with the logged-in user on the node) ───────────────

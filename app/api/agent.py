@@ -320,7 +320,13 @@ async def checkin(body: CheckinRequest, node: CurrentNode, db: DbDep) -> dict:
     await db.commit()
 
     checkin_interval = await _get_setting_int(db, "agent_checkin_interval_sec", 60)
-    return {"checkin_interval_sec": checkin_interval, "commands": commands, "messages": messages}
+    speedtest_interval = await _get_setting_int(db, "agent_speedtest_interval_sec", 0)
+    return {
+        "checkin_interval_sec": checkin_interval,
+        "speedtest_interval_sec": speedtest_interval,
+        "commands": commands,
+        "messages": messages,
+    }
 
 
 # ── Messages (agent -> admin replies) ────────────────────────────────────────
@@ -349,16 +355,38 @@ class CommandResultIn(BaseModel):
     result: str = ""
 
 
+async def _record_speedtest_result(db: aiosqlite.Connection, node_id: int, triggered_by: str, data: dict) -> None:
+    await db.execute(
+        """
+        INSERT INTO speedtest_results
+            (node_id, status, download_mbps, upload_mbps, latency_ms, jitter_ms, server_fqdn, error, triggered_by)
+        VALUES (?,?,?,?,?,?,?,?,?)
+        """,
+        (
+            node_id,
+            data.get("status") or "failed",
+            data.get("download_mbps"),
+            data.get("upload_mbps"),
+            data.get("latency_ms"),
+            data.get("jitter_ms"),
+            data.get("server_fqdn"),
+            data.get("error"),
+            triggered_by,
+        ),
+    )
+
+
 @router.post("/commands/{command_id}/result")
 async def report_command_result(
     command_id: int, body: CommandResultIn, node: CurrentNode, db: DbDep
 ) -> dict:
     async with db.execute(
-        "SELECT id FROM commands WHERE id=? AND node_id=?", (command_id, node["id"])
+        "SELECT id, command_type FROM commands WHERE id=? AND node_id=?", (command_id, node["id"])
     ) as cur:
         row = await cur.fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="Command not found for this node")
+    command_type = row[1]
 
     status = "completed" if body.status not in ("completed", "failed") else body.status
     await db.execute(
@@ -368,6 +396,38 @@ async def report_command_result(
         """,
         (status, body.exit_code, json.dumps({"output": body.result}), command_id),
     )
+
+    # An on-demand speed test rides the ordinary command-result pipeline
+    # (it has a real command id to report against, unlike the scheduled
+    # path below) — its JSON output also gets a row in the dedicated
+    # speedtest_results history table, same shape either way.
+    if command_type == "run_speedtest":
+        try:
+            data = json.loads(body.result)
+        except (ValueError, TypeError):
+            data = {"status": "failed", "error": body.result or "malformed speedtest result"}
+        await _record_speedtest_result(db, node["id"], "manual", data)
+
+    await db.commit()
+    return {"ok": True}
+
+
+# ── Speed test results (scheduled runs — no command id to report against) ───
+
+class SpeedtestResultIn(BaseModel):
+    status: str = "completed"   # completed | failed
+    download_mbps: float | None = None
+    upload_mbps: float | None = None
+    latency_ms: float | None = None
+    jitter_ms: float | None = None
+    server_fqdn: str | None = None
+    error: str | None = None
+    triggered_by: str = "scheduled"
+
+
+@router.post("/speedtest/result")
+async def report_speedtest_result(body: SpeedtestResultIn, node: CurrentNode, db: DbDep) -> dict:
+    await _record_speedtest_result(db, node["id"], body.triggered_by, body.model_dump())
     await db.commit()
     return {"ok": True}
 
