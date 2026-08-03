@@ -67,9 +67,10 @@ type MessageOut struct {
 }
 
 type CheckinResponse struct {
-	CheckinIntervalSec int          `json:"checkin_interval_sec"`
-	Commands           []CommandOut `json:"commands"`
-	Messages           []MessageOut `json:"messages"`
+	CheckinIntervalSec   int          `json:"checkin_interval_sec"`
+	SpeedtestIntervalSec int          `json:"speedtest_interval_sec"`
+	Commands             []CommandOut `json:"commands"`
+	Messages             []MessageOut `json:"messages"`
 }
 
 func (c *Client) Checkin(payload interface{}) (*CheckinResponse, error) {
@@ -93,6 +94,29 @@ func (c *Client) ReportCommandResult(commandID int, result CommandResult) error 
 
 func (c *Client) ReplyMessage(message string) error {
 	return c.do("POST", "/api/agent/messages/reply", map[string]string{"message": message}, c.Token, nil)
+}
+
+// SpeedtestResult mirrors speedtest.Result — kept as its own type here
+// (rather than importing the speedtest package) so apiclient stays a leaf
+// package with no dependency on what calls it.
+type SpeedtestResult struct {
+	Status       string  `json:"status"`
+	DownloadMbps float64 `json:"download_mbps,omitempty"`
+	UploadMbps   float64 `json:"upload_mbps,omitempty"`
+	LatencyMs    float64 `json:"latency_ms,omitempty"`
+	JitterMs     float64 `json:"jitter_ms,omitempty"`
+	ServerFQDN   string  `json:"server_fqdn,omitempty"`
+	Error        string  `json:"error,omitempty"`
+	// TriggeredBy is "scheduled" for every call through this path — an
+	// on-demand run instead goes through the ordinary command-result
+	// endpoint (ReportCommandResult) since it already has a command id to
+	// report against; this endpoint exists only for the unprompted,
+	// server-interval-driven case that has no command behind it.
+	TriggeredBy string `json:"triggered_by"`
+}
+
+func (c *Client) ReportSpeedtestResult(result SpeedtestResult) error {
+	return c.do("POST", "/api/agent/speedtest/result", result, c.Token, nil)
 }
 
 func (c *Client) do(method, path string, body interface{}, token string, out interface{}) error {
