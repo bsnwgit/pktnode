@@ -87,7 +87,13 @@ function fmtTime(ts: string | null): string {
   return new Date(toUtc(ts)).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })
 }
 
-type Tab = 'overview' | 'software' | 'processes' | 'metrics' | 'commands' | 'messages'
+type Tab = 'overview' | 'software' | 'processes' | 'security' | 'metrics' | 'commands' | 'messages'
+
+const FIREWALL_STYLES: Record<string, string> = {
+  enabled:  'bg-green-900/40 text-green-400 border border-green-700/40',
+  disabled: 'bg-red-900/40 text-red-400 border border-red-700/40',
+  unknown:  'bg-gray-800 text-white border border-gray-700',
+}
 
 function MetricsChart({ history }: { history: NodeDetailType['metrics_history'] }) {
   const data = [...history]
@@ -597,12 +603,14 @@ export default function NodeDetail() {
 
   const filteredSoftware = node.software.filter(s => matches(s.name, s.version, s.publisher, s.install_date))
   const filteredProcesses = node.processes.filter(p => matches(p.pid, p.name, p.username))
+  const filteredPorts = node.ports.filter(p => matches(p.protocol, p.port, p.process_name, p.pid))
   const filteredMetrics = node.metrics_history.filter(m => matches(fmtTime(m.recorded_at)))
   const filteredCommands = commands.filter(c => matches(c.command_type, c.status, c.created_by, c.result?.output))
 
   const listForTab: Record<string, unknown[]> = {
     software: filteredSoftware,
     processes: filteredProcesses,
+    security: filteredPorts,
     metrics: filteredMetrics,
     commands: filteredCommands,
   }
@@ -611,6 +619,7 @@ export default function NodeDetail() {
   const pageStart = (page - 1) * pageSize
   const pagedSoftware = filteredSoftware.slice(pageStart, pageStart + pageSize)
   const pagedProcesses = filteredProcesses.slice(pageStart, pageStart + pageSize)
+  const pagedPorts = filteredPorts.slice(pageStart, pageStart + pageSize)
   const pagedMetrics = filteredMetrics.slice(pageStart, pageStart + pageSize)
   const pagedCommands = filteredCommands.slice(pageStart, pageStart + pageSize)
 
@@ -699,7 +708,7 @@ export default function NodeDetail() {
 
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-1 bg-gray-900 border border-gray-800 rounded-xl p-1 w-fit">
-          {(['overview', 'software', 'processes', 'metrics', 'commands', 'messages'] as Tab[]).map(t => (
+          {(['overview', 'software', 'processes', 'security', 'metrics', 'commands', 'messages'] as Tab[]).map(t => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -895,6 +904,60 @@ export default function NodeDetail() {
               )}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {tab === 'security' && (
+        <div className="space-y-4">
+          <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 flex items-center gap-3">
+            <p className="text-xs text-white">Host firewall</p>
+            <span className={`text-xs px-2.5 py-1 rounded-full capitalize ${FIREWALL_STYLES[node.firewall_status] ?? FIREWALL_STYLES.unknown}`}>
+              {node.firewall_status}
+            </span>
+          </div>
+          <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+            {filteredPorts.length > 0 && (
+              <div className="flex items-center justify-center gap-6 px-5 py-3 border-b border-gray-800">
+                <Pagination page={page} totalPages={totalPages} onChange={setPage} />
+                <div className="flex items-center gap-2">
+                  <label htmlFor="ports-per-page" className="text-xs text-white">Ports per page:</label>
+                  <select
+                    id="ports-per-page"
+                    value={pageSize}
+                    onChange={e => changePageSize(Number(e.target.value))}
+                    className="text-sm bg-gray-800 border border-gray-700 text-white rounded-lg px-2 py-1 focus:outline-none focus:border-blue-500"
+                  >
+                    {PAGE_SIZE_OPTIONS.map(size => (
+                      <option key={size} value={size}>{size}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            )}
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-800">
+                  <th className="px-5 py-3 text-left text-xs font-medium text-white">Protocol</th>
+                  <th className="px-5 py-3 text-left text-xs font-medium text-white">Port</th>
+                  <th className="px-5 py-3 text-left text-xs font-medium text-white">Process</th>
+                  <th className="px-5 py-3 text-left text-xs font-medium text-white">PID</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-800/50">
+                {pagedPorts.map((p, i) => (
+                  <tr key={i} className="hover:bg-gray-800/30 transition-colors">
+                    <td className="px-5 py-2.5 text-white text-xs uppercase">{p.protocol}</td>
+                    <td className="px-5 py-2.5 text-white text-xs font-mono">{p.port}</td>
+                    <td className="px-5 py-2.5 text-white">{p.process_name || '—'}</td>
+                    <td className="px-5 py-2.5 text-white text-xs font-mono">{p.pid || '—'}</td>
+                  </tr>
+                ))}
+                {filteredPorts.length === 0 && (
+                  <tr><td colSpan={4} className="px-5 py-8 text-center text-sm text-white">{node.ports.length === 0 ? 'No listening-port data yet' : 'No ports match your search'}</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
