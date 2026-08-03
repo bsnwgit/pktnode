@@ -148,6 +148,12 @@ async def get_node(node_id: int, _: CurrentUser, db: DbDep) -> dict:
         node["interfaces"] = interfaces
 
     async with db.execute(
+        "SELECT protocol, port, process_name, pid, captured_at FROM node_ports WHERE node_id=? ORDER BY protocol, port",
+        (node_id,),
+    ) as cur:
+        node["ports"] = [dict(r) for r in await cur.fetchall()]
+
+    async with db.execute(
         "SELECT cpu_pct, mem_pct, disk_pct, recorded_at FROM node_metrics_history "
         "WHERE node_id=? ORDER BY recorded_at DESC LIMIT 500",
         (node_id,),
