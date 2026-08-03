@@ -46,7 +46,15 @@ The installer downloads the matching binary, exchanges the enrollment token for 
 
 ### What gets collected
 
-Every check-in: CPU/memory/disk %, uptime, current logged-in user, primary IP. Every 15th check-in: full software inventory, running-process snapshot, and network interfaces (replaced wholesale, not appended to history).
+Every check-in: CPU/memory/disk %, uptime, current logged-in user, primary IP. Every 15th check-in: full software inventory, running-process snapshot, network interfaces, listening ports, and host firewall status (replaced wholesale, not appended to history).
+
+### Security signals (agent 0.2.0+)
+
+Every full-inventory check-in also reports listening TCP/UDP ports (with owning process where resolvable) and a best-effort firewall status (`enabled`/`disabled`/`unknown` — `unknown` on Linux hosts running bare iptables/nftables with no `ufw`/`firewalld` front-end). Both show on a node's **Security** tab.
+
+This is the same data pktSecurity's `pktnode_suite` asset collector consumes when configured against this server — open ports feed its exposed-service risk scoring directly, no extra configuration needed on either side once the node reports them. Firewall status is currently informational only (visible on the node and passed through to pktSecurity) — nothing scores risk or compliance on it yet.
+
+**Agents enrolled before 0.2.0 report neither field until reinstalled** — there's no agent self-update mechanism, so pick a node's row on the Enrollment page and re-run its install command to upgrade it in place (re-enrolling reuses the same node record rather than creating a duplicate, as long as the machine's hardware serial hasn't changed).
 
 ## Remote actions
 

@@ -23,6 +23,7 @@ whoever's logged into the machine (via a tray/menu-bar helper).
 - [Installation](#installation)
 - [Using pktNode](#using-pktnode)
 - [Agent](#agent)
+  - [Security Signals](#security-signals)
 - [Frontend Build & Deploy](#frontend-build--deploy)
 - [Configuration Reference](#configuration-reference)
 - [Running & Managing the Service](#running--managing-the-service)
@@ -120,6 +121,8 @@ itself.
   [Per-device and group overrides](#per-device-and-group-overrides)),
   Software (installed-package inventory),
   Processes (running-process snapshot, with a per-row **Kill** action),
+  Security (listening TCP/UDP ports and a best-effort host firewall
+  enabled/disabled state — see [Security signals](#security-signals)),
   Metrics (CPU/mem/disk history chart + table), Commands (remote-action
   history), and Messages (tray chat, see below). Admin/analyst get two
   action buttons at the top:
@@ -204,8 +207,35 @@ pktnode-agent version
 
 Every check-in: CPU/memory/disk %, uptime, current logged-in user, primary
 IP. Every 15th check-in (configurable via the check-in cadence, not
-independently): full software inventory, running-process snapshot, and
-network interfaces — replaced wholesale each time, not appended to history.
+independently): full software inventory, running-process snapshot, network
+interfaces, listening ports, and host firewall status — replaced wholesale
+each time, not appended to history (see
+[Security signals](#security-signals)).
+
+### Security signals
+
+As of agent `0.2.0`, every full-inventory check-in also reports:
+
+- **Listening ports** — every locally listening TCP/UDP port, cross-platform
+  via `gopsutil` (no per-OS shell-outs), with the owning process name/PID
+  where resolvable. This is what feeds pktSecurity's exposed-service risk
+  scoring when pktNode is added as an asset source there — a node with, say,
+  RDP or Redis listening moves its exposure score the moment this data
+  exists, with no configuration needed on pktSecurity's side.
+- **Host firewall status** — `enabled` / `disabled` / `unknown`, detected
+  per-OS: `socketfilterfw --getglobalstate` on macOS, `ufw status` falling
+  back to `firewall-cmd --state` on Linux, `Get-NetFirewallProfile` on
+  Windows. `unknown` covers hosts where none of those are present (e.g. bare
+  iptables/nftables with no front-end) — this is a best-effort signal, not a
+  guarantee. **Informational only for now**: it's visible on the node's
+  Security tab and passed through to pktSecurity, but nothing currently
+  scores risk or compliance on it.
+
+Both are visible on a node's **Security** tab. **Agents already enrolled
+before 0.2.0 won't report either field until reinstalled** — there is no
+agent self-update mechanism (see [Known Gaps](#known-gaps--fast-follow-work)),
+so picking this up on an existing fleet means re-running the install command
+from that node's Enrollment token.
 
 ### Remote actions
 
@@ -550,7 +580,15 @@ go run . install --server http://localhost:8764 --token <enrollment-token>
   (`system_profiler` on macOS, `dpkg-query`/`rpm` on Linux, the registry
   uninstall keys on Windows) — best-effort, not exhaustive on every distro
   (notably Alpine/apk isn't handled on Linux).
-- No patch/update-management surface yet (OS or third-party).
+- No patch/update-management surface yet (OS or third-party) — deliberately
+  out of scope for [Security signals](#security-signals) v1, since checking
+  it is slow (macOS `softwareupdate -l` can take 10-30s+) and per-OS
+  quirky (apt/yum cache state, Windows WMI); would need its own
+  slower-cadence poll rather than riding the regular check-in.
+- No auth/login event telemetry (failed/successful logins) — a different
+  category of data than the inventory-style check-in handles today; would
+  need a log-tailing cursor to avoid re-delivering the same events and,
+  on Windows, elevated rights to read the Security event log.
 - Queued remote actions (Queue Command / bulk Reboot/Shut Down) are still
   fire-and-forget, not interactive — use Live Terminal for anything that
   needs a live session. `run_script` still works at the API level but
