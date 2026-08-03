@@ -480,6 +480,14 @@ export interface NodeMetricPoint {
   recorded_at: string
 }
 
+export interface NodePort {
+  protocol: string
+  port: number
+  process_name: string | null
+  pid: number | null
+  captured_at: string
+}
+
 export interface NodeDetail extends NodeSummary {
   serial_number: string | null
   timezone: string | null
@@ -488,6 +496,8 @@ export interface NodeDetail extends NodeSummary {
   software: NodeSoftware[]
   processes: NodeProcess[]
   interfaces: NodeInterface[]
+  ports: NodePort[]
+  firewall_status: 'enabled' | 'disabled' | 'unknown'
   metrics_history: NodeMetricPoint[]
   has_tray: boolean
 }

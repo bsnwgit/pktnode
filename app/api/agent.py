@@ -184,6 +184,13 @@ class InterfaceItem(BaseModel):
     is_up: bool = True
 
 
+class PortItem(BaseModel):
+    protocol: str
+    port: int
+    process_name: str = ""
+    pid: int = 0
+
+
 class CheckinRequest(BaseModel):
     hostname: Optional[str] = None
     os_version: Optional[str] = None
@@ -201,6 +208,7 @@ class CheckinRequest(BaseModel):
     timezone: Optional[str] = None
     domain_or_workgroup: Optional[str] = None
     current_user: Optional[str] = None
+    firewall_status: Optional[str] = None
 
     cpu_pct: Optional[float] = None
     mem_pct: Optional[float] = None
@@ -212,6 +220,7 @@ class CheckinRequest(BaseModel):
     software: list[SoftwareItem] = []
     processes: list[ProcessItem] = []
     interfaces: list[InterfaceItem] = []
+    ports: list[PortItem] = []
 
     has_tray: bool = False
 
@@ -229,6 +238,7 @@ async def checkin(body: CheckinRequest, node: CurrentNode, db: DbDep) -> dict:
         "disk_free_gb": body.disk_free_gb, "uptime_seconds": body.uptime_seconds,
         "timezone": body.timezone, "domain_or_workgroup": body.domain_or_workgroup,
         "current_user": body.current_user, "has_tray": body.has_tray,
+        "firewall_status": body.firewall_status,
     }
     set_clauses = [f"{k}=?" for k, v in fields.items() if v is not None]
     values = [v for v in fields.values() if v is not None]
@@ -263,6 +273,13 @@ async def checkin(body: CheckinRequest, node: CurrentNode, db: DbDep) -> dict:
             await db.execute(
                 "INSERT INTO node_interfaces (node_id, name, mac_address, ip_addresses, is_up) VALUES (?,?,?,?,?)",
                 (node_id, item.name, item.mac_address, json.dumps(item.ip_addresses), int(item.is_up)),
+            )
+
+        await db.execute("DELETE FROM node_ports WHERE node_id=?", (node_id,))
+        for item in body.ports:
+            await db.execute(
+                "INSERT INTO node_ports (node_id, protocol, port, process_name, pid) VALUES (?,?,?,?,?)",
+                (node_id, item.protocol, item.port, item.process_name, item.pid),
             )
 
     # Hand back any commands still waiting for this node, and mark them sent

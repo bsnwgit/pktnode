@@ -18,7 +18,7 @@ import (
 	"github.com/shirou/gopsutil/v3/process"
 )
 
-const AgentVersion = "0.1.0"
+const AgentVersion = "0.2.0"
 
 // Collect gathers a full snapshot. fullInventory controls whether the
 // (more expensive) software/process lists are populated — the agent
@@ -71,6 +71,8 @@ func Collect(fullInventory bool) Snapshot {
 	if fullInventory {
 		snap.Software = collectSoftware() // per-OS
 		snap.Processes = collectProcesses()
+		snap.Ports = collectPorts()
+		snap.FirewallStatus = collectFirewallStatus() // per-OS
 	}
 
 	// The server's Pydantic model requires these fields to be JSON arrays,
@@ -83,6 +85,9 @@ func Collect(fullInventory bool) Snapshot {
 	}
 	if snap.Interfaces == nil {
 		snap.Interfaces = []Interface{}
+	}
+	if snap.Ports == nil {
+		snap.Ports = []PortItem{}
 	}
 
 	return snap
