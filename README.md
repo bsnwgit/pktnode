@@ -24,6 +24,7 @@ whoever's logged into the machine (via a tray/menu-bar helper).
 - [Using pktNode](#using-pktnode)
 - [Agent](#agent)
   - [Security Signals](#security-signals)
+  - [Speed Test](#speed-test)
 - [Frontend Build & Deploy](#frontend-build--deploy)
 - [Configuration Reference](#configuration-reference)
 - [Running & Managing the Service](#running--managing-the-service)
@@ -253,6 +254,36 @@ it is **not currently exposed as an option in the Queue Command modal**.
 For one-off/ad-hoc commands today, use [Live Terminal](#live-terminal)
 instead, which is interactive and instant rather than queued.
 
+### Speed Test
+
+From a node's detail page, a **Speedtest** tab runs a real download/upload/
+latency test via [M-Lab's NDT7 protocol](https://github.com/m-lab/ndt7-client-go)
+— no API key or bundled external binary (unlike Ookla's CLI), just a Go
+client compiled into the agent. A nearby M-Lab measurement server is
+auto-discovered via M-Lab's public Locate API each run.
+
+- **On-demand**: **Run Speedtest Now** on the tab queues a `run_speedtest`
+  command through the same command queue as Remote Actions above —
+  pending → sent → completed/failed, up to a check-in interval of
+  latency, same as any other queued action.
+- **Scheduled**: `Settings → General → Speedtest schedule` sets a
+  server-wide interval in hours (`0` = off, the default). Unlike the
+  check-in interval's caveat below, this setting *does* take effect on an
+  already-running agent — it's re-read fresh from every check-in response
+  rather than cached at process start, so no re-enroll is needed when you
+  change it.
+- Only one speed test runs at a time per node — if a scheduled run and a
+  manual "Run Speedtest Now" collide, the second one is skipped/rejected
+  rather than queued behind the first.
+- Every run (manual or scheduled, completed or failed) is logged to a
+  dedicated history table on the Speedtest tab: download/upload Mbps,
+  latency/jitter in ms (from the M-Lab server's own TCP_INFO
+  instrumentation — reported regardless of the node's own OS), which
+  server was used, and what triggered it.
+- **Agents already enrolled before the speed test feature shipped won't
+  have it until reinstalled** — same self-update limitation as
+  [Security signals](#security-signals) above.
+
 ### Live Terminal
 
 A real interactive shell on the node, opened from the **Live Terminal**
@@ -391,6 +422,12 @@ apply it to a process that's already running, and restarting the agent
 service doesn't re-fetch it either (it reloads the same value from its
 local config file). Re-enrolling a node is currently the only way to pick
 up a changed interval on an existing install.
+
+**Speedtest schedule** (Settings → General, default `0` = off, hours)
+controls how often each node runs an unattended [speed test](#speed-test).
+Unlike the check-in interval above, this one is re-read from every
+check-in response rather than cached at agent startup, so changing it
+applies to already-running agents on their very next check-in.
 
 ## Running & Managing the Service
 
@@ -607,3 +644,8 @@ go run . install --server http://localhost:8764 --token <enrollment-token>
 - Tamper lockout is userland-only by design (see the "Tamper lockout"
   section above) — no kernel-level enforcement, so a local admin/root can
   always force-kill the process.
+- [Speed Test](#speed-test) latency/jitter come from the M-Lab server's own
+  TCP_INFO instrumentation relayed over the ndt7 websocket, not a local
+  measurement — this is deliberate (works the same regardless of the
+  node's OS) but means it reflects the server's view of the path, not a
+  separately-measured client-side RTT.
