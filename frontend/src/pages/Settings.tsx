@@ -1098,7 +1098,7 @@ export default function Settings() {
     setGeneralSaving(true); setGeneralSaved(false); setGeneralError('')
     try {
       const subset: Settings = {}
-      for (const k of ['app_name', 'base_url', 'timezone', 'agent_checkin_interval_sec', 'alert_host_down_enabled']) if (k in settings) subset[k] = settings[k]
+      for (const k of ['app_name', 'base_url', 'timezone', 'agent_checkin_interval_sec', 'agent_speedtest_interval_sec', 'alert_host_down_enabled']) if (k in settings) subset[k] = settings[k]
       await api.bulkUpdateSettings(subset)
       await api.setPort(portValue)
       await load()
@@ -1304,6 +1304,12 @@ export default function Settings() {
             <div className="flex items-center gap-3">
               <NumberInput value={num('agent_checkin_interval_sec', 60)} onChange={v => set('agent_checkin_interval_sec', v)} min={15} max={3600} />
               <span className="text-sm text-white">seconds</span>
+            </div>
+          </Field>
+          <Field label="Speedtest schedule" hint="How often each node runs an unattended speed test (M-Lab NDT7 — no API key needed). Set to 0 to disable scheduled runs; on-demand 'Run Speedtest Now' on a node's page always works regardless of this setting.">
+            <div className="flex items-center gap-3">
+              <NumberInput value={num('agent_speedtest_interval_sec', 0) / 3600} onChange={v => set('agent_speedtest_interval_sec', Math.round(v * 3600))} min={0} max={168} />
+              <span className="text-sm text-white">hours (0 = off)</span>
             </div>
           </Field>
           <Field label="Host down alerts" hint="Fire an alert when a node stops checking in. Turn off if your fleet includes laptops/desktops that sleep or shut down normally — also clears any host-down alerts currently open.">

@@ -257,6 +257,7 @@ export const api = {
   deleteNode: (id: number) => request(`/nodes/${id}`, { method: 'DELETE' }),
 
   getNodeCommands: (id: number) => request<CommandRecord[]>(`/nodes/${id}/commands`),
+  getNodeSpeedtests: (id: number) => request<SpeedtestResult[]>(`/nodes/${id}/speedtest-results`),
   queueCommand: (id: number, command_type: string, payload: Record<string, unknown> = {}) =>
     request<{ id: number; status: string }>(`/nodes/${id}/commands`, {
       method: 'POST',
@@ -513,6 +514,19 @@ export interface CommandRecord {
   exit_code: number | null
   result: { output: string } | null
   created_by: string | null
+}
+
+export interface SpeedtestResult {
+  id: number
+  status: 'completed' | 'failed'
+  download_mbps: number | null
+  upload_mbps: number | null
+  latency_ms: number | null
+  jitter_ms: number | null
+  server_fqdn: string | null
+  error: string | null
+  triggered_by: 'manual' | 'scheduled'
+  created_at: string
 }
 
 export interface NodeMessage {

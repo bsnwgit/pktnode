@@ -60,6 +60,10 @@ This is the same data pktSecurity's `pktnode_suite` asset collector consumes whe
 
 Queue `restart_service`, `kill_process`, `reboot`, `shutdown` from a node's detail page or in bulk from Nodes. Applied on the node's next check-in (bounded by the check-in interval, not instant). The API also still accepts `run_script`, and the agent still executes it, but it isn't currently exposed in the Queue Command modal — use **Live Terminal** for ad-hoc one-off commands instead.
 
+## Speed Test
+
+A node's **Speedtest** tab runs a real download/upload/latency test over M-Lab's NDT7 protocol — no API key, no bundled external binary, a nearby measurement server is auto-discovered each run. **Run Speedtest Now** queues it through the same command mechanism as Remote Actions above (pending → sent → completed/failed). For an unattended schedule, set **Settings → General → Speedtest schedule** (hours, `0` = off) — unlike the check-in interval, this setting takes effect on already-running agents on their very next check-in, no re-enroll needed. Only one test runs per node at a time; a collision between a scheduled run and a manual one is skipped, not queued. Every run (including failures) lands in the Speedtest tab's history table with download/upload Mbps, latency/jitter, and which server was used. **Agents enrolled before this feature shipped need reinstalling to pick it up**, same limitation as Security signals above.
+
 ## Live Terminal
 
 A real interactive shell, opened via a persistent outbound WebSocket the agent keeps open (separate from its periodic HTTP check-in) — the server relays between that and an admin's browser session. The node never accepts an inbound connection of any kind, so no firewall changes are needed on the managed machine. A second admin opening a terminal on the same node preempts (doesn't queue behind) the existing session. If the node has no live control-channel connection (agent offline, or an older build predating this feature), the button reports that plainly.
