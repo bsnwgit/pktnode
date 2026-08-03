@@ -22,6 +22,12 @@ type Config struct {
 	// network call. Lives in this 0600 file, never the world-readable
 	// Status file, for the same reason AgentToken does.
 	OverrideSecret string `json:"override_secret"`
+	// SpeedtestIntervalSec is refreshed from every check-in response
+	// (server-configured, 0 = scheduled speed tests disabled). LastSpeedtestAt
+	// tracks when this node last ran one (manually or scheduled) so the
+	// check-in loop knows whether the interval has elapsed yet.
+	SpeedtestIntervalSec int    `json:"speedtest_interval_sec"`
+	LastSpeedtestAt      string `json:"last_speedtest_at"`
 }
 
 // Status is written world-readable (unlike Config, which carries a bearer

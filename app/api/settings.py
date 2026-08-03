@@ -29,6 +29,10 @@ DEFAULTS: dict[str, Any] = {
     # Agent check-in interval the server hands out at enrollment time (seconds).
     "agent_checkin_interval_sec": 60,
 
+    # How often each node runs an unattended NDT7 speed test (seconds).
+    # 0 = scheduled speed tests disabled (on-demand "Run Speedtest" still works).
+    "agent_speedtest_interval_sec": 0,
+
     # Auth
     "auth_local_enabled": True,
     "session_timeout_minutes": 480,
