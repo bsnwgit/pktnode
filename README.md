@@ -25,6 +25,7 @@ whoever's logged into the machine (via a tray/menu-bar helper).
 - [Agent](#agent)
   - [Security Signals](#security-signals)
   - [Speed Test](#speed-test)
+  - [Updating Agents](#updating-agents)
 - [Frontend Build & Deploy](#frontend-build--deploy)
 - [Configuration Reference](#configuration-reference)
 - [Running & Managing the Service](#running--managing-the-service)
@@ -114,8 +115,13 @@ itself.
   (admin/analyst) multi-select rows with the checkbox column to **bulk
   reboot or shut down** several nodes at once — each queues a `reboot`/
   `shutdown` command per selected node, applied on that node's next
-  check-in, same as the single-node action — or **bulk-assign them to a
-  group** via the same selection (see [Groups](#groups)).
+  check-in, same as the single-node action — **bulk-assign them to a
+  group** via the same selection (see [Groups](#groups)), or **push an
+  agent update** to the selection. The page header also shows the current
+  **Latest agent** version (from `agent-releases/VERSION`) with an
+  **Update N outdated agents** button that pushes to every active node
+  not already on it, no selection needed — see
+  [Updating agents](#updating-agents).
 - **Node detail** (`/nodes/{id}`) — tabs for Overview (hardware, IP, current
   user, network interfaces, **Groups** membership, and a **Host down
   alerts** override — see [Groups](#groups) and
@@ -131,12 +137,16 @@ itself.
     [Live Terminal](#live-terminal) below) — nothing queued, nothing logged.
   - **Queue Command** — opens a console-style modal to fire a fixed remote
     action (**Restart service**, **Kill process**, **Reboot node**,
-    **Shutdown node**) and watch it move from `pending` → `sent` →
-    `completed`/`failed` live, without leaving the modal. Every queued
-    command is also logged in the Commands tab, and clicking a past row
-    reopens the modal seeded with that command's transcript. See
+    **Shutdown node**, **Update agent**) and watch it move from `pending` →
+    `sent` → `completed`/`failed` live, without leaving the modal. Every
+    queued command is also logged in the Commands tab, and clicking a past
+    row reopens the modal seeded with that command's transcript. See
     [Remote actions](#remote-actions) for exactly what each type does and
     its current caveats.
+  - Overview also shows **Agent version**, with an inline
+    **Update to vX.Y.Z** link next to it whenever this node is behind the
+    latest available build — a one-click shortcut to the same push, no
+    modal needed.
   - Admins additionally get **Override Code** (the live TOTP code for
     locally stopping/uninstalling the agent — see
     [Tamper lockout](#tamper-lockout-override-code)) and
@@ -233,26 +243,56 @@ As of agent `0.2.0`, every full-inventory check-in also reports:
   scores risk or compliance on it.
 
 Both are visible on a node's **Security** tab. **Agents already enrolled
-before 0.2.0 won't report either field until reinstalled** — there is no
-agent self-update mechanism (see [Known Gaps](#known-gaps--fast-follow-work)),
-so picking this up on an existing fleet means re-running the install command
-from that node's Enrollment token.
+before 0.2.0 won't report either field until updated** — see
+[Updating agents](#updating-agents) below.
 
 ### Remote actions
 
 From a node's detail page (**Queue Command**) or in bulk from the Nodes
 list (multi-select → Reboot/Shut Down), admins/analysts can queue:
-`restart_service`, `kill_process`, `reboot`, `shutdown`. Commands are
-picked up on the node's next check-in (so latency is bounded by the
-check-in interval, not instant — up to a minute is normal) and results
-are visible in the node's Commands tab, or live in the Queue Command modal
-while a command you just fired is still in flight.
+`restart_service`, `kill_process`, `reboot`, `shutdown`, `update_agent`.
+Commands are picked up on the node's next check-in (so latency is bounded
+by the check-in interval, not instant — up to a minute is normal) and
+results are visible in the node's Commands tab, or live in the Queue
+Command modal while a command you just fired is still in flight.
 
 The server API also still accepts a `run_script` command type (shell on
 macOS/Linux, PowerShell on Windows) and the agent still executes it — but
 it is **not currently exposed as an option in the Queue Command modal**.
 For one-off/ad-hoc commands today, use [Live Terminal](#live-terminal)
 instead, which is interactive and instant rather than queued.
+
+### Updating agents
+
+`update_agent` (agent 0.2.0+) is what powers everything described above as
+a "push": the Nodes list's per-node/bulk/all-outdated actions and a node's
+own Overview **Update to vX.Y.Z** link all just queue this command type,
+same as any other remote action.
+
+On execution, the agent:
+
+1. Downloads the release binary matching its own OS/arch from this
+   server's `/agent-releases/` (built by `agent/build.sh` — see
+   [Building](#building)).
+2. Atomically swaps it in over its own currently-running binary (rename,
+   not truncate — safe even though the old binary is still executing;
+   same trick the installer itself uses).
+3. Restarts itself: on macOS/Linux this reuses the existing tamper-lockout
+   unlock-grant + signal path (the same mechanism an admin-authorized stop
+   goes through), then relies on `Restart=always`/`KeepAlive=true` to
+   relaunch it. Windows SCM won't auto-restart a cleanly-stopped service,
+   so there it schedules a short-delayed detached `sc start` helper first,
+   then requests its own stop the same way.
+
+The command reports `completed` (with the binary swap already done) before
+the restart actually lands, so the queued command's result doesn't race the
+process going away.
+
+**Only agents already on 0.2.0+ understand `update_agent` at all** — an
+agent older than that just reports it as an unknown command type and stays
+on its current build. Get it onto 0.2.0+ once via a normal reinstall
+(Enrollment page → node row → **Get Install Command**); every push after
+that works normally.
 
 ### Speed Test
 
@@ -281,8 +321,9 @@ auto-discovered via M-Lab's public Locate API each run.
   instrumentation — reported regardless of the node's own OS), which
   server was used, and what triggered it.
 - **Agents already enrolled before the speed test feature shipped won't
-  have it until reinstalled** — same self-update limitation as
-  [Security signals](#security-signals) above.
+  have it until updated** — see [Updating agents](#updating-agents) above
+  (agents already on 0.2.0+, which shipped speed test, can just be pushed;
+  anything older needs one reinstall first).
 
 ### Live Terminal
 
@@ -407,7 +448,7 @@ See `config.example.yaml` — covers server bind host/port, install_dir,
 JWT secret, CORS origins, node liveness thresholds
 (`offline_after_sec`/`stale_after_sec`), logging, and SSL cert paths.
 Everything else (notifications, alert thresholds, SSL toggle, suite
-integration token, AI assistant key, backup schedule, enrollment tokens,
+integration token, AI assistant provider config, backup schedule, enrollment tokens,
 agent check-in interval) lives in the SQLite `settings`/`enrollment_tokens`
 tables and is managed from the Settings page — not this file.
 
@@ -630,6 +671,11 @@ go run . install --server http://localhost:8764 --token <enrollment-token>
   fire-and-forget, not interactive — use Live Terminal for anything that
   needs a live session. `run_script` still works at the API level but
   isn't exposed as a Queue Command option in the current UI.
+- Agent self-update ([Updating Agents](#updating-agents)) only works
+  between agents that already understand the `update_agent` command —
+  anything enrolled before 0.2.0 needs one manual reinstall first. There's
+  also no version pinning/rollback: a push always installs whatever's
+  currently sitting in `agent-releases/` on the server.
 - No tray/status-icon build for Linux (needs GTK3/libappindicator3-dev,
   build natively on Linux) or Windows/arm64 (no readily available cgo
   cross-toolchain for it) — which also means no tray chat and no
