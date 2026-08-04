@@ -741,6 +741,12 @@ restored DB.
 - **New user has no admin account**: `PKTNODE_ADMIN_PASSWORD` must be set
   on first boot when the `users` table is empty; `install.sh` handles this
   automatically.
+- **AI Assistant chat said "Not authenticated" even with a provider
+  configured (fixed 2026-08-03)**: the chat request wasn't sending the
+  session's auth token, so it failed pktNode's own login check before ever
+  reaching the configured AI provider — unrelated to Ollama/Anthropic/OpenAI
+  settings. Also fixed: connection/timeout failures reaching a provider used
+  to show a blank error message; they now name the provider and its base URL.
 
 ## Development
 
