@@ -28,8 +28,9 @@ env.bak/
 venv.bak/
 
 # ─── Runtime / secrets ────────────────────────────────────────────────────────
-# real config (use config.example.yaml as template)
-config.yaml
+# real config (use config.example.yaml as template) — anchored to the repo
+# root only, so it doesn't also swallow homeassistant-addon's manifest
+/config.yaml
 # SQLite databases
 *.db
 *.db-shm
@@ -63,6 +64,8 @@ frontend/.vite/
 /agent-releases/
 agent/pktnode-agent
 agent/pktnode-agent.exe
+# built output — produced by homeassistant-addon/pktnode-agent/build.sh
+homeassistant-addon/pktnode-agent/pktnode-agent
 
 # ─── OS / editor ──────────────────────────────────────────────────────────────
 .DS_Store

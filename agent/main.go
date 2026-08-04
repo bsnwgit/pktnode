@@ -21,6 +21,7 @@ import (
 
 	"pktnode-agent/internal/agentloop"
 	"pktnode-agent/internal/config"
+	"pktnode-agent/internal/haosloop"
 	"pktnode-agent/internal/inventory"
 	"pktnode-agent/internal/svcinstall"
 	"pktnode-agent/internal/svcrun"
@@ -42,6 +43,11 @@ func main() {
 		runUnlock(os.Args[2:])
 	case "run":
 		runForeground()
+	case "supervise":
+		// Unraid-only, undocumented — launched by the /boot/config/go hook
+		// (or immediately at install time) in place of systemd's
+		// Restart=always. See svcinstall.Supervise.
+		runSupervise()
 	case "version":
 		fmt.Println("pktNode agent " + inventory.AgentVersion)
 	case "-h", "--help", "help":
@@ -207,9 +213,37 @@ func runUninstall(args []string) {
 func runForeground() {
 	log.SetFlags(log.LstdFlags | log.Lmsgprefix)
 	log.SetPrefix("pktnode-agent: ")
+
+	// Same binary everywhere — Home Assistant OS just isn't a platform
+	// this can install itself onto and run natively the way it does on
+	// Unraid/Linux/macOS/Windows (see homeassistant-addon/pktnode-agent
+	// for how it actually gets there), so `run` branches into an
+	// entirely different collection/command backend instead of the usual
+	// systemd/launchd/SCM-managed svcrun.Run() below.
+	//
+	// This detection has been flaky in practice (SUPERVISOR_TOKEN present
+	// on one add-on start, mysteriously absent on the next) — log the
+	// actual signal every single run, not just on failure, so a bad run
+	// is diagnosable from its own log instead of needing a special
+	// reproduction.
+	isHAOS := inventory.IsHAOS()
+	log.Printf("startup: SUPERVISOR_TOKEN present=%v -> HAOS mode=%v", os.Getenv("SUPERVISOR_TOKEN") != "", isHAOS)
+	if isHAOS {
+		if err := haosloop.Run(); err != nil {
+			log.Fatalf("agent stopped: %v", err)
+		}
+		return
+	}
+
 	if err := svcrun.Run(); err != nil {
 		log.Fatalf("agent stopped: %v", err)
 	}
+}
+
+func runSupervise() {
+	log.SetFlags(log.LstdFlags | log.Lmsgprefix)
+	log.SetPrefix("pktnode-agent-supervisor: ")
+	svcinstall.Supervise()
 }
 
 // copySelf copies the currently running executable to dest, creating

@@ -52,49 +52,6 @@ func promptForCode() (string, bool) {
 	}
 }
 
-// promptForReply shows an incoming admin message and a text-entry box for
-// an optional reply. ok is true only if the user actually typed something
-// and confirmed — leaving it blank or cancelling means "no reply", not an
-// error, so the caller shouldn't treat !ok as a failure.
-func promptForReply(message string) (string, bool) {
-	prompt := "Message from admin:\n\n" + message + "\n\nReply (leave blank to dismiss):"
-
-	switch runtime.GOOS {
-	case "darwin":
-		script := fmt.Sprintf(
-			`text returned of (display dialog %s default answer "" with title "pktNode — Message" buttons {"Dismiss", "Send Reply"} default button "Send Reply")`,
-			quoteAppleScript(prompt),
-		)
-		out, err := exec.Command("osascript", "-e", script).Output()
-		if err != nil {
-			return "", false
-		}
-		val := strings.TrimSpace(string(out))
-		return val, val != ""
-
-	case "windows":
-		script := fmt.Sprintf(
-			`Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.Interaction]::InputBox(%s, "pktNode - Message", "")`,
-			quotePowerShell(prompt),
-		)
-		out, err := exec.Command("powershell", "-NoProfile", "-Command", script).Output()
-		if err != nil {
-			return "", false
-		}
-		val := strings.TrimSpace(string(out))
-		return val, val != ""
-
-	default: // linux
-		out, err := exec.Command("zenity", "--entry",
-			"--title=pktNode — Message", "--text="+prompt, "--ok-label=Send Reply", "--cancel-label=Dismiss").Output()
-		if err != nil {
-			return "", false // Dismiss -> non-zero exit
-		}
-		val := strings.TrimSpace(string(out))
-		return val, val != ""
-	}
-}
-
 func showMessage(title, msg string) {
 	switch runtime.GOOS {
 	case "darwin":

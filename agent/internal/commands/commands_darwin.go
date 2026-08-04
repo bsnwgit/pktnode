@@ -4,9 +4,11 @@ package commands
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -76,4 +78,25 @@ func execShutdown() (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return runCmd(ctx, "shutdown", "-h", "now")
+}
+
+// execDiskHealthCheck reads SMART status off the boot volume via diskutil,
+// which ships on every Mac — no extra tooling required.
+func execDiskHealthCheck() (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	out, err := runCmd(ctx, "diskutil", "info", "/")
+	if err != nil {
+		return "", fmt.Errorf("diskutil info: %w: %s", err, out)
+	}
+	status := "unknown"
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "SMART Status:") {
+			status = strings.TrimSpace(strings.TrimPrefix(line, "SMART Status:"))
+			break
+		}
+	}
+	result, _ := json.Marshal([]map[string]string{{"disk": "/", "smart_status": status}})
+	return string(result), nil
 }

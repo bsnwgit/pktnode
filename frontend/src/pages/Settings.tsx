@@ -1223,6 +1223,8 @@ export default function Settings() {
       parts.push(r.alert_events_deleted > 0 ? `${r.alert_events_deleted} alert events purged` : 'No alert events beyond retention threshold')
       if (r.metrics_history_deleted > 0)
         parts.push(`${r.metrics_history_deleted} metrics history rows purged`)
+      if (r.network_history_deleted > 0)
+        parts.push(`${r.network_history_deleted} network history rows purged`)
       setCleanupResult(parts.join(' · '))
       await loadStorageStats()
     } catch (e: any) {
