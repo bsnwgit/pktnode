@@ -556,7 +556,11 @@ JWT secret, CORS origins, node liveness thresholds
 Everything else (notifications, alert thresholds, SSL toggle, suite
 integration token, AI assistant provider config, backup schedule, enrollment tokens,
 agent check-in interval) lives in the SQLite `settings`/`enrollment_tokens`
-tables and is managed from the Settings page — not this file.
+tables and is managed from the Settings page — not this file. The AI assistant
+is scoped strictly to pktNode's own domain (managed node inventory, resource
+usage, alerts, remote actions) — off-topic questions, requests to discuss
+other pktApp suite tools, and prompt-injection/override attempts are refused
+server-side before ever reaching the AI provider.
 
 **Agent check-in interval** (Settings → General, default 60s, 15–3600s
 range) controls how often every node calls home — it's also the floor on
