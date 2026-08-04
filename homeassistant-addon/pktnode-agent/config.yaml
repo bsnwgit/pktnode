@@ -1,0 +1,18 @@
+name: pktNode Agent
+version: "0.8.0"
+slug: pktnode_agent
+description: Reports this Home Assistant instance to a pktNode server for monitoring and remote host control.
+url: "https://github.com/bsnwgit/pktnode"
+arch:
+  - amd64
+init: false
+hassio_api: true
+hassio_role: manager
+homeassistant_api: false
+host_network: false
+options:
+  server_url: ""
+  enrollment_token: ""
+schema:
+  server_url: url
+  enrollment_token: password

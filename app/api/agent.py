@@ -145,10 +145,21 @@ async def enroll(body: EnrollRequest, db: DbDep) -> dict:
         "INSERT INTO agent_tokens (node_id, token_hash) VALUES (?, ?)",
         (node_id, hash_agent_token(agent_token)),
     )
-    await db.execute(
-        "UPDATE enrollment_tokens SET use_count = use_count + 1 WHERE id=?",
-        (token_id,),
-    )
+    new_use_count = use_count + 1
+    if max_uses is not None and new_use_count >= max_uses:
+        # Fully spent — remove it outright rather than leaving an exhausted
+        # row sitting in the Enrollment list. It's meant to be a one-time
+        # (or fixed-count) credential, not a standing one; nothing else
+        # needs it once every use is accounted for (nodes.enrollment_token_id
+        # is just an informational breadcrumb, ON DELETE SET NULL). Unlimited
+        # tokens (max_uses IS NULL — shared rollout links) are deliberately
+        # exempt, since those are meant to be reused indefinitely.
+        await db.execute("DELETE FROM enrollment_tokens WHERE id=?", (token_id,))
+    else:
+        await db.execute(
+            "UPDATE enrollment_tokens SET use_count = ? WHERE id=?",
+            (new_use_count, token_id),
+        )
     await db.commit()
 
     checkin_interval = await _get_setting_int(db, "agent_checkin_interval_sec", 60)
@@ -191,6 +202,47 @@ class PortItem(BaseModel):
     pid: int = 0
 
 
+class DiskItem(BaseModel):
+    mount_point: str
+    device: str = ""
+    fs_type: str = ""
+    total_gb: Optional[float] = None
+    free_gb: Optional[float] = None
+    used_pct: Optional[float] = None
+
+
+class UnraidArrayIn(BaseModel):
+    state: str = ""
+    parity_check_active: bool = False
+    parity_check_pct: Optional[float] = None
+    parity_check_errors: Optional[int] = None
+    last_sync_at: str = ""  # "" if the array has never been synced
+    last_sync_errors: Optional[int] = None
+
+
+class UnraidDiskItem(BaseModel):
+    name: str
+    role: str = ""
+    device: str = ""
+    status: str = ""
+    temp_c: Optional[float] = None
+    size_gb: Optional[float] = None
+    fs_type: str = ""
+    num_errors: Optional[int] = None
+
+
+class UnraidContainerItem(BaseModel):
+    name: str
+    image: str = ""
+    state: str = ""
+    status: str = ""
+
+
+class UnraidVMItem(BaseModel):
+    name: str
+    state: str = ""
+
+
 class CheckinRequest(BaseModel):
     hostname: Optional[str] = None
     os_version: Optional[str] = None
@@ -214,6 +266,11 @@ class CheckinRequest(BaseModel):
     mem_pct: Optional[float] = None
     disk_pct: Optional[float] = None
 
+    # Null on an agent's first check-in after every restart (no prior
+    # counter sample to diff against yet) — see agent/internal/inventory.
+    net_sent_mbps: Optional[float] = None
+    net_recv_mbps: Optional[float] = None
+
     # Full inventory refresh is opt-in per check-in (agent decides the
     # cadence) — lightweight heartbeats can omit these entirely.
     full_inventory: bool = False
@@ -221,6 +278,13 @@ class CheckinRequest(BaseModel):
     processes: list[ProcessItem] = []
     interfaces: list[InterfaceItem] = []
     ports: list[PortItem] = []
+    disks: list[DiskItem] = []
+
+    # Unraid-only — always absent/empty from every other platform's agent.
+    unraid_array: Optional[UnraidArrayIn] = None
+    unraid_disks: list[UnraidDiskItem] = []
+    unraid_containers: list[UnraidContainerItem] = []
+    unraid_vms: list[UnraidVMItem] = []
 
     has_tray: bool = False
 
@@ -228,6 +292,24 @@ class CheckinRequest(BaseModel):
 @router.post("/checkin")
 async def checkin(body: CheckinRequest, node: CurrentNode, db: DbDep) -> dict:
     node_id = node["id"]
+
+    # A real check-in is the strongest possible proof this node's
+    # enrollment token is fully spent — stronger than the /enroll-time
+    # bookkeeping above, which updates use_count/deletes the token in the
+    # same request but has no way to self-heal if that ever falls out of
+    # sync with reality (the token row and the node row are two separate
+    # writes; nothing re-derives one from the other after the fact). This
+    # closes that gap unconditionally on every check-in: a harmless no-op
+    # once the row's already gone, but guarantees a token can never sit
+    # around in the Enrollment list once the node it minted has actually
+    # shown up and started talking to the server. Deletes outright rather
+    # than revoking — same as the /enroll-time exhaustion path a few lines
+    # up, it's fully spent, nothing left to keep around.
+    if node.get("enrollment_token_id"):
+        await db.execute(
+            "DELETE FROM enrollment_tokens WHERE id=?",
+            (node["enrollment_token_id"],),
+        )
 
     fields = {
         "hostname": body.hostname, "os_version": body.os_version,
@@ -251,6 +333,12 @@ async def checkin(body: CheckinRequest, node: CurrentNode, db: DbDep) -> dict:
         await db.execute(
             "INSERT INTO node_metrics_history (node_id, cpu_pct, mem_pct, disk_pct) VALUES (?,?,?,?)",
             (node_id, body.cpu_pct, body.mem_pct, body.disk_pct),
+        )
+
+    if body.net_sent_mbps is not None or body.net_recv_mbps is not None:
+        await db.execute(
+            "INSERT INTO node_network_history (node_id, sent_mbps, recv_mbps) VALUES (?,?,?)",
+            (node_id, body.net_sent_mbps, body.net_recv_mbps),
         )
 
     if body.full_inventory:
@@ -282,6 +370,51 @@ async def checkin(body: CheckinRequest, node: CurrentNode, db: DbDep) -> dict:
                 (node_id, item.protocol, item.port, item.process_name, item.pid),
             )
 
+        await db.execute("DELETE FROM node_disks WHERE node_id=?", (node_id,))
+        for item in body.disks:
+            await db.execute(
+                "INSERT INTO node_disks (node_id, mount_point, device, fs_type, total_gb, free_gb, used_pct) "
+                "VALUES (?,?,?,?,?,?,?)",
+                (node_id, item.mount_point, item.device, item.fs_type, item.total_gb, item.free_gb, item.used_pct),
+            )
+
+        if body.unraid_array is not None:
+            a = body.unraid_array
+            await db.execute(
+                "INSERT INTO node_unraid_array "
+                "(node_id, state, parity_check_active, parity_check_pct, parity_check_errors, last_sync_at, last_sync_errors) "
+                "VALUES (?,?,?,?,?,?,?) "
+                "ON CONFLICT(node_id) DO UPDATE SET "
+                "state=excluded.state, parity_check_active=excluded.parity_check_active, "
+                "parity_check_pct=excluded.parity_check_pct, parity_check_errors=excluded.parity_check_errors, "
+                "last_sync_at=excluded.last_sync_at, last_sync_errors=excluded.last_sync_errors",
+                (node_id, a.state, int(a.parity_check_active), a.parity_check_pct, a.parity_check_errors,
+                 a.last_sync_at or None, a.last_sync_errors),
+            )
+
+        await db.execute("DELETE FROM node_unraid_disks WHERE node_id=?", (node_id,))
+        for item in body.unraid_disks:
+            await db.execute(
+                "INSERT INTO node_unraid_disks (node_id, name, role, device, status, temp_c, size_gb, fs_type, num_errors) "
+                "VALUES (?,?,?,?,?,?,?,?,?)",
+                (node_id, item.name, item.role, item.device, item.status, item.temp_c, item.size_gb,
+                 item.fs_type, item.num_errors),
+            )
+
+        await db.execute("DELETE FROM node_unraid_containers WHERE node_id=?", (node_id,))
+        for item in body.unraid_containers:
+            await db.execute(
+                "INSERT INTO node_unraid_containers (node_id, name, image, state, status) VALUES (?,?,?,?,?)",
+                (node_id, item.name, item.image, item.state, item.status),
+            )
+
+        await db.execute("DELETE FROM node_unraid_vms WHERE node_id=?", (node_id,))
+        for item in body.unraid_vms:
+            await db.execute(
+                "INSERT INTO node_unraid_vms (node_id, name, state) VALUES (?,?,?)",
+                (node_id, item.name, item.state),
+            )
+
     # Hand back any commands still waiting for this node, and mark them sent
     # so the next check-in doesn't hand them out again.
     async with db.execute(
@@ -301,22 +434,6 @@ async def checkin(body: CheckinRequest, node: CurrentNode, db: DbDep) -> dict:
             ids,
         )
 
-    # Hand back any admin->agent messages not yet delivered to the tray, and
-    # mark them delivered so the next check-in doesn't hand them out again.
-    async with db.execute(
-        "SELECT id, message, created_at FROM node_messages WHERE node_id=? AND sender='admin' AND delivered_at IS NULL",
-        (node_id,),
-    ) as cur:
-        pending_msgs = await cur.fetchall()
-    messages = [{"id": r[0], "message": r[1], "created_at": r[2]} for r in pending_msgs]
-    if messages:
-        ids = [m["id"] for m in messages]
-        placeholders = ",".join("?" for _ in ids)
-        await db.execute(
-            f"UPDATE node_messages SET delivered_at=datetime('now') WHERE id IN ({placeholders})",
-            ids,
-        )
-
     await db.commit()
 
     checkin_interval = await _get_setting_int(db, "agent_checkin_interval_sec", 60)
@@ -325,26 +442,7 @@ async def checkin(body: CheckinRequest, node: CurrentNode, db: DbDep) -> dict:
         "checkin_interval_sec": checkin_interval,
         "speedtest_interval_sec": speedtest_interval,
         "commands": commands,
-        "messages": messages,
     }
-
-
-# ── Messages (agent -> admin replies) ────────────────────────────────────────
-
-class ReplyIn(BaseModel):
-    message: str
-
-
-@router.post("/messages/reply")
-async def reply_message(body: ReplyIn, node: CurrentNode, db: DbDep) -> dict:
-    if not body.message.strip():
-        raise HTTPException(status_code=400, detail="message is required")
-    await db.execute(
-        "INSERT INTO node_messages (node_id, sender, message) VALUES (?, 'agent', ?)",
-        (node["id"], body.message.strip()),
-    )
-    await db.commit()
-    return {"ok": True}
 
 
 # ── Command results ──────────────────────────────────────────────────────────

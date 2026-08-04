@@ -87,6 +87,7 @@ async def run_cleanup() -> dict:
     result: dict = {
         "alert_events_deleted": 0,
         "metrics_history_deleted": 0,
+        "network_history_deleted": 0,
         "status": "ok",
     }
 
@@ -101,6 +102,10 @@ async def run_cleanup() -> dict:
                 "DELETE FROM node_metrics_history WHERE recorded_at < datetime('now', '-90 days')"
             )
             result["metrics_history_deleted"] = cur2.rowcount
+            cur3 = await db.execute(
+                "DELETE FROM node_network_history WHERE recorded_at < datetime('now', '-90 days')"
+            )
+            result["network_history_deleted"] = cur3.rowcount
             await db.commit()
     except Exception as e:
         log.warning(f"Cleanup error: {e}")
@@ -108,14 +113,17 @@ async def run_cleanup() -> dict:
 
     log.info(
         f"Manual cleanup: alert_events_deleted={result['alert_events_deleted']}, "
-        f"metrics_history_deleted={result['metrics_history_deleted']}"
+        f"metrics_history_deleted={result['metrics_history_deleted']}, "
+        f"network_history_deleted={result['network_history_deleted']}"
     )
     return result
 
 
 _STORAGE_STATS_TABLES = [
     "nodes", "node_software", "node_processes", "node_interfaces",
-    "node_metrics_history", "commands", "alert_events", "app_logs",
+    "node_metrics_history", "node_network_history", "node_disks",
+    "node_unraid_array", "node_unraid_disks", "node_unraid_containers", "node_unraid_vms",
+    "commands", "alert_events", "app_logs",
 ]
 
 

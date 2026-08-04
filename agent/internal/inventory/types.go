@@ -23,11 +23,24 @@ type Snapshot struct {
 	MemPercent float64 `json:"mem_pct"`
 	DiskPercent float64 `json:"disk_pct"`
 
+	// Null on the first check-in after every agent restart — there's no
+	// prior counter sample yet to diff against. See collectNetworkRates.
+	NetSentMbps *float64 `json:"net_sent_mbps,omitempty"`
+	NetRecvMbps *float64 `json:"net_recv_mbps,omitempty"`
+
 	FullInventory bool           `json:"full_inventory"`
 	Software      []SoftwareItem `json:"software"`
 	Processes     []ProcessItem  `json:"processes"`
 	Interfaces    []Interface    `json:"interfaces"`
 	Ports         []PortItem     `json:"ports"`
+	Disks         []DiskVolume   `json:"disks"`
+
+	// Unraid-only — always nil/empty on every other platform. See
+	// unraid_linux.go.
+	UnraidArray      *UnraidArray      `json:"unraid_array,omitempty"`
+	UnraidDisks      []UnraidDisk      `json:"unraid_disks"`
+	UnraidContainers []UnraidContainer `json:"unraid_containers"`
+	UnraidVMs        []UnraidVM        `json:"unraid_vms"`
 
 	// FirewallStatus is one of "enabled", "disabled", or "unknown" (detection
 	// not implemented/failed for this OS). Best-effort — see firewall_<os>.go.
@@ -67,4 +80,45 @@ type Interface struct {
 	MACAddress  string   `json:"mac_address"`
 	IPAddresses []string `json:"ip_addresses"`
 	IsUp        bool     `json:"is_up"`
+}
+
+type DiskVolume struct {
+	MountPoint string  `json:"mount_point"`
+	Device     string  `json:"device"`
+	FSType     string  `json:"fs_type"`
+	TotalGB    float64 `json:"total_gb"`
+	FreeGB     float64 `json:"free_gb"`
+	UsedPct    float64 `json:"used_pct"`
+}
+
+type UnraidArray struct {
+	State              string  `json:"state"`
+	ParityCheckActive  bool    `json:"parity_check_active"`
+	ParityCheckPct     float64 `json:"parity_check_pct"`
+	ParityCheckErrors  int     `json:"parity_check_errors"`
+	LastSyncAt         string  `json:"last_sync_at"` // "" if the array has never been synced
+	LastSyncErrors     int     `json:"last_sync_errors"`
+}
+
+type UnraidDisk struct {
+	Name      string  `json:"name"`
+	Role      string  `json:"role"` // Parity | Data | Cache | Flash
+	Device    string  `json:"device"`
+	Status    string  `json:"status"` // DISK_OK | DISK_NP | ...
+	TempC     float64 `json:"temp_c"`
+	SizeGB    float64 `json:"size_gb"`
+	FSType    string  `json:"fs_type"`
+	NumErrors int     `json:"num_errors"`
+}
+
+type UnraidContainer struct {
+	Name   string `json:"name"`
+	Image  string `json:"image"`
+	State  string `json:"state"`
+	Status string `json:"status"`
+}
+
+type UnraidVM struct {
+	Name  string `json:"name"`
+	State string `json:"state"`
 }

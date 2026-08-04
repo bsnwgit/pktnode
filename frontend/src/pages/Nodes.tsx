@@ -47,6 +47,9 @@ export default function Nodes() {
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [groups, setGroups] = useState<GroupInfo[]>([])
   const [assigningGroup, setAssigningGroup] = useState(false)
+  const [latestAgentVersion, setLatestAgentVersion] = useState<string | null>(null)
+  const [pushingUpdate, setPushingUpdate] = useState(false)
+  const [checkingInBulk, setCheckingInBulk] = useState(false)
   const canAct = user?.role === 'admin' || user?.role === 'analyst'
 
   const load = async () => {
@@ -60,6 +63,42 @@ export default function Nodes() {
 
   useEffect(() => { load(); setSelected(new Set()) }, [statusFilter])
   useEffect(() => { if (canAct) api.getGroups().then(setGroups).catch(() => {}) }, [canAct])
+  useEffect(() => { if (canAct) api.getLatestAgentVersion().then(r => setLatestAgentVersion(r.version)).catch(() => {}) }, [canAct])
+
+  const outdatedCount = nodes.filter(n =>
+    n.status !== 'decommissioned' && latestAgentVersion && n.agent_version && n.agent_version !== latestAgentVersion
+  ).length
+
+  const pushUpdateToSelected = async () => {
+    const targets = nodes.filter(n => selected.has(n.id))
+    if (targets.length === 0) return
+    const names = targets.map(n => n.display_name || n.hostname).join(', ')
+    if (!confirm(
+      `Push the agent update to ${targets.length} node${targets.length === 1 ? '' : 's'}?\n\n${names}\n\n` +
+      'Each agent downloads the current release and restarts itself on its next check-in.'
+    )) return
+    setPushingUpdate(true)
+    try {
+      await api.pushAgentUpdate({ node_ids: [...selected] })
+      setSelected(new Set())
+    } finally {
+      setPushingUpdate(false)
+    }
+  }
+
+  const pushUpdateToAllOutdated = async () => {
+    if (outdatedCount === 0) return
+    if (!confirm(
+      `Push the agent update to all ${outdatedCount} outdated node${outdatedCount === 1 ? '' : 's'}?\n\n` +
+      'Each agent downloads the current release and restarts itself on its next check-in.'
+    )) return
+    setPushingUpdate(true)
+    try {
+      await api.pushAgentUpdate({ all: true, outdated_only: true })
+    } finally {
+      setPushingUpdate(false)
+    }
+  }
 
   const deletePermanently = async (id: number, hostname: string) => {
     if (!confirm(
@@ -101,6 +140,22 @@ export default function Nodes() {
     setSelected(new Set())
   }
 
+  const checkinNowBulk = async () => {
+    const targets = nodes.filter(n => selected.has(n.id))
+    if (targets.length === 0) return
+    setCheckingInBulk(true)
+    try {
+      const results = await Promise.allSettled(targets.map(n => api.checkinNow(n.id)))
+      const failed = results.filter(r => r.status === 'rejected').length
+      if (failed > 0) {
+        alert(`${failed} of ${targets.length} node${targets.length === 1 ? '' : 's'} couldn't be reached — likely offline or on an agent build that predates this feature.`)
+      }
+      setTimeout(() => { load() }, 3000)
+    } finally {
+      setCheckingInBulk(false)
+    }
+  }
+
   const bulkAssignGroup = async (groupName: string) => {
     const targets = nodes.filter(n => selected.has(n.id) && !n.tags.includes(groupName))
     setAssigningGroup(true)
@@ -124,6 +179,20 @@ export default function Nodes() {
           </HelpButton>
         </div>
         <div className="flex items-center gap-2">
+          {canAct && latestAgentVersion && (
+            <div className="flex items-center gap-2 text-xs text-white">
+              <span>Latest agent: <span className="font-mono">v{latestAgentVersion}</span></span>
+              {outdatedCount > 0 && (
+                <button
+                  onClick={pushUpdateToAllOutdated}
+                  disabled={pushingUpdate}
+                  className="text-xs bg-blue-600/20 text-blue-300 hover:bg-blue-600/30 rounded-lg px-3 py-1.5 transition-colors disabled:opacity-50"
+                >
+                  Update {outdatedCount} outdated agent{outdatedCount === 1 ? '' : 's'}
+                </button>
+              )}
+            </div>
+          )}
           <input
             value={q}
             onChange={e => setQ(e.target.value)}
@@ -156,6 +225,12 @@ export default function Nodes() {
             <span className="text-sm text-white">{selected.size} selected</span>
             <button onClick={() => bulkPowerAction('reboot')} className="text-xs text-white hover:text-white underline">Reboot</button>
             <button onClick={() => bulkPowerAction('shutdown')} className="text-xs text-red-400 hover:text-red-300 underline">Shut Down</button>
+            <button onClick={pushUpdateToSelected} disabled={pushingUpdate} className="text-xs text-blue-300 hover:text-blue-200 underline disabled:opacity-50">Update Agent</button>
+            <button onClick={checkinNowBulk} disabled={checkingInBulk}
+              title="Ask each selected node to check in right now over its live control channel, instead of waiting for its next scheduled check-in"
+              className="text-xs text-white hover:text-white underline disabled:opacity-50">
+              {checkingInBulk ? 'Checking in…' : 'Check In Now'}
+            </button>
             <select
               value=""
               onChange={e => { if (e.target.value) bulkAssignGroup(e.target.value) }}
@@ -187,6 +262,7 @@ export default function Nodes() {
                 <th className="px-5 py-3 text-left text-xs font-medium text-white">OS</th>
                 <th className="px-5 py-3 text-left text-xs font-medium text-white">IP</th>
                 <th className="px-5 py-3 text-left text-xs font-medium text-white hidden md:table-cell">Disk free</th>
+                <th className="px-5 py-3 text-left text-xs font-medium text-white hidden lg:table-cell">Agent</th>
                 <th className="px-5 py-3 text-left text-xs font-medium text-white">Status</th>
                 <th className="px-5 py-3 text-left text-xs font-medium text-white">Last check-in</th>
                 <th className="px-5 py-3"></th>
@@ -211,12 +287,22 @@ export default function Nodes() {
                   <td className="px-5 py-3 text-white text-xs hidden md:table-cell cursor-pointer" onClick={() => navigate(`/nodes/${n.id}`)}>
                     {n.disk_free_gb !== null && n.disk_total_gb ? `${fmtBytes(n.disk_free_gb)} / ${fmtBytes(n.disk_total_gb)}` : '—'}
                   </td>
+                  <td className="px-5 py-3 text-xs hidden lg:table-cell cursor-pointer" onClick={() => navigate(`/nodes/${n.id}`)}>
+                    {n.agent_version ? (
+                      <span className={`font-mono ${latestAgentVersion && n.agent_version !== latestAgentVersion ? 'text-yellow-400' : 'text-white'}`}>
+                        v{n.agent_version}
+                        {latestAgentVersion && n.agent_version !== latestAgentVersion && (
+                          <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-yellow-900/40 text-yellow-400 border border-yellow-700/40 font-sans">outdated</span>
+                        )}
+                      </span>
+                    ) : '—'}
+                  </td>
                   <td className="px-5 py-3 cursor-pointer" onClick={() => navigate(`/nodes/${n.id}`)}>
                     <span className={`text-xs px-2 py-0.5 rounded-full capitalize ${STATUS_STYLES[n.status] ?? STATUS_STYLES.pending}`}>{n.status}</span>
                   </td>
                   <td className="px-5 py-3 text-white text-xs cursor-pointer" onClick={() => navigate(`/nodes/${n.id}`)}>{fmtRelative(n.last_checkin_at)}</td>
                   <td className="px-5 py-3 text-right">
-                    {n.status === 'decommissioned' && user?.role === 'admin' && (
+                    {(n.status === 'decommissioned' || n.status === 'pending') && user?.role === 'admin' && (
                       <button onClick={() => deletePermanently(n.id, n.display_name || n.hostname)}
                         className="text-xs text-red-400 hover:text-red-300 transition-colors">
                         Delete Permanently
