@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -72,4 +73,32 @@ func execShutdown() (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return runPowerShell(ctx, "shutdown /s /t 0")
+}
+
+// execDiskHealthCheck uses the built-in Storage module (Get-PhysicalDisk),
+// present on every supported Windows version — no extra tooling required.
+// deviceOf is a no-op on Windows — there's no /proc-style pseudo-filesystem
+// trap to guard against here, so disk_largest_files just walks the given
+// path as-is.
+func deviceOf(path string) (uint64, bool) {
+	return 0, false
+}
+
+func execDiskHealthCheck() (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	out, err := runPowerShell(ctx,
+		"Get-PhysicalDisk | Select-Object DeviceId,FriendlyName,HealthStatus,OperationalStatus | ConvertTo-Json -Compress")
+	if err != nil {
+		return "", fmt.Errorf("Get-PhysicalDisk: %w: %s", err, out)
+	}
+	trimmed := strings.TrimSpace(out)
+	if trimmed == "" {
+		trimmed = "[]"
+	} else if !strings.HasPrefix(trimmed, "[") {
+		// ConvertTo-Json emits a bare object, not an array, when there's
+		// exactly one disk — normalize so callers always get a JSON array.
+		trimmed = "[" + trimmed + "]"
+	}
+	return trimmed, nil
 }

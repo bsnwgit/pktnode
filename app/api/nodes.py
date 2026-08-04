@@ -6,12 +6,14 @@ these rows are populated from.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any, Optional
 
 import aiosqlite
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
+from app.config import get_settings
 from app.database import get_db
 from app.dependencies import AdminUser, AnalystUser, CurrentUser, DbDep
 from app import totp
@@ -160,6 +162,56 @@ async def get_node(node_id: int, _: CurrentUser, db: DbDep) -> dict:
     ) as cur:
         node["metrics_history"] = [dict(r) for r in await cur.fetchall()]
 
+    async with db.execute(
+        "SELECT sent_mbps, recv_mbps, recorded_at FROM node_network_history "
+        "WHERE node_id=? ORDER BY recorded_at DESC LIMIT 500",
+        (node_id,),
+    ) as cur:
+        node["network_history"] = [dict(r) for r in await cur.fetchall()]
+
+    async with db.execute(
+        "SELECT mount_point, device, fs_type, total_gb, free_gb, used_pct FROM node_disks "
+        "WHERE node_id=? ORDER BY mount_point",
+        (node_id,),
+    ) as cur:
+        node["disks"] = [dict(r) for r in await cur.fetchall()]
+
+    if node["os_type"] == "unraid":
+        async with db.execute(
+            "SELECT state, parity_check_active, parity_check_pct, parity_check_errors, last_sync_at, last_sync_errors "
+            "FROM node_unraid_array WHERE node_id=?",
+            (node_id,),
+        ) as cur:
+            row = await cur.fetchone()
+        unraid_array = dict(row) if row else None
+        if unraid_array is not None:
+            unraid_array["parity_check_active"] = bool(unraid_array["parity_check_active"])
+        node["unraid_array"] = unraid_array
+
+        async with db.execute(
+            "SELECT name, role, device, status, temp_c, size_gb, fs_type, num_errors FROM node_unraid_disks "
+            "WHERE node_id=? ORDER BY id",
+            (node_id,),
+        ) as cur:
+            node["unraid_disks"] = [dict(r) for r in await cur.fetchall()]
+
+        async with db.execute(
+            "SELECT name, image, state, status FROM node_unraid_containers WHERE node_id=? ORDER BY name",
+            (node_id,),
+        ) as cur:
+            node["unraid_containers"] = [dict(r) for r in await cur.fetchall()]
+
+        async with db.execute(
+            "SELECT name, state FROM node_unraid_vms WHERE node_id=? ORDER BY name",
+            (node_id,),
+        ) as cur:
+            node["unraid_vms"] = [dict(r) for r in await cur.fetchall()]
+    else:
+        node["unraid_array"] = None
+        node["unraid_disks"] = []
+        node["unraid_containers"] = []
+        node["unraid_vms"] = []
+
     return node
 
 
@@ -289,6 +341,18 @@ async def delete_node(node_id: int, _: AdminUser, db: DbDep) -> None:
         row = await cur.fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="Node not found")
+
+    # The alert engine's auto-resolve logic joins alert_events against a
+    # still-existing node row (is_active=0 is what it checks for a
+    # decommissioned node) — once the row is gone entirely there's nothing
+    # left to join against, so any still-open alert for this node would
+    # otherwise sit unresolved forever. Resolve them here rather than
+    # deleting the rows outright, matching decommission's "keeps alert
+    # history for the record" — this just closes them out, doesn't erase them.
+    await db.execute(
+        "UPDATE alert_events SET resolved_at=datetime('now'), auto_resolved=1 WHERE node_id=? AND resolved_at IS NULL",
+        (node_id,),
+    )
     await db.execute("DELETE FROM nodes WHERE id=?", (node_id,))
     await db.commit()
 
@@ -296,11 +360,28 @@ async def delete_node(node_id: int, _: AdminUser, db: DbDep) -> None:
 # ── Remote actions ───────────────────────────────────────────────────────────
 
 class CommandIn(BaseModel):
-    command_type: str   # restart_service | kill_process | run_script | reboot | shutdown
+    command_type: str   # restart_service | kill_process | run_script | reboot | shutdown | update_agent | ...
     payload: dict = {}
 
 
-_VALID_COMMAND_TYPES = {"restart_service", "kill_process", "run_script", "reboot", "shutdown", "run_speedtest"}
+_VALID_COMMAND_TYPES = {
+    "restart_service", "kill_process", "run_script", "reboot", "shutdown",
+    "run_speedtest", "update_agent",
+    "disk_largest_files", "disk_cleanup_temp", "disk_health_check",
+    "docker_start", "docker_stop", "docker_restart",
+    "vm_start", "vm_stop", "vm_restart",
+}
+
+# Container/VM actions read as "instant" in Unraid's own UI, so waiting out
+# the rest of a check-in interval (up to a minute-plus) to even *start*
+# feels broken by comparison — these get an automatic "check in now" nudge
+# over the live control channel right after queuing (best-effort, same
+# push /checkin-now already sends; silently falls back to the normal
+# check-in cadence if the node has no live connection right now).
+_LIVE_NUDGE_COMMAND_TYPES = {
+    "docker_start", "docker_stop", "docker_restart",
+    "vm_start", "vm_stop", "vm_restart",
+}
 
 
 @router.get("/{node_id}/commands")
@@ -350,7 +431,81 @@ async def queue_command(node_id: int, body: CommandIn, user: AnalystUser, db: Db
     ) as cur:
         command_id = cur.lastrowid
     await db.commit()
+
+    if body.command_type in _LIVE_NUDGE_COMMAND_TYPES:
+        agent = hub.get_agent(node_id)
+        if agent is not None:
+            try:
+                await agent.send({"type": "checkin_now"})
+            except Exception:
+                pass  # best-effort — falls back to the normal check-in cadence
+
     return {"id": command_id, "status": "pending"}
+
+
+# ── Agent updates ────────────────────────────────────────────────────────
+# Binaries live in {install_dir}/agent-releases (see app/main.py's static
+# mount, which is what enrolled agents actually download from) — agent/
+# build.sh drops a VERSION file alongside them on every rebuild, extracted
+# straight from the Go AgentVersion const, so it can never drift from
+# what's actually in the directory.
+
+def _agent_releases_dir() -> Path:
+    return Path(get_settings().install_dir) / "agent-releases"
+
+
+@router.get("/agents/latest-version")
+async def latest_agent_version(_: CurrentUser) -> dict:
+    version_file = _agent_releases_dir() / "VERSION"
+    if not version_file.exists():
+        return {"version": None}
+    return {"version": version_file.read_text().strip()}
+
+
+class AgentUpdateIn(BaseModel):
+    node_ids: Optional[list[int]] = None   # explicit selection
+    all: bool = False                      # every active node instead of node_ids
+    outdated_only: bool = False            # skip nodes already reporting the latest version
+
+
+@router.post("/agents/update", status_code=201)
+async def push_agent_update(body: AgentUpdateIn, user: AnalystUser, db: DbDep) -> dict:
+    """
+    Queue an update_agent command for the selected (or all) active nodes.
+    Each one downloads the current agent-releases build for its own OS/arch
+    and installs it on its next check-in (see execUpdateAgent in the agent's
+    internal/commands package, and app/api/agent.py for the check-in side).
+    """
+    if not body.all and not body.node_ids:
+        raise HTTPException(status_code=400, detail="Provide node_ids or set all=true")
+
+    db.row_factory = aiosqlite.Row
+    if body.all:
+        async with db.execute("SELECT id, agent_version FROM nodes WHERE is_active=1") as cur:
+            targets = await cur.fetchall()
+    else:
+        placeholders = ",".join("?" for _ in body.node_ids)
+        async with db.execute(
+            f"SELECT id, agent_version FROM nodes WHERE is_active=1 AND id IN ({placeholders})",
+            body.node_ids,
+        ) as cur:
+            targets = await cur.fetchall()
+
+    if body.outdated_only:
+        version_file = _agent_releases_dir() / "VERSION"
+        latest = version_file.read_text().strip() if version_file.exists() else None
+        if latest:
+            targets = [t for t in targets if t["agent_version"] != latest]
+
+    queued = []
+    for t in targets:
+        async with db.execute(
+            "INSERT INTO commands (node_id, command_type, payload_json, created_by) VALUES (?,?,?,?)",
+            (t["id"], "update_agent", "{}", user["id"]),
+        ) as cur:
+            queued.append({"node_id": t["id"], "command_id": cur.lastrowid})
+    await db.commit()
+    return {"queued": queued, "count": len(queued)}
 
 
 @router.get("/{node_id}/speedtest-results")
@@ -371,54 +526,28 @@ async def list_speedtest_results(node_id: int, _: CurrentUser, db: DbDep) -> lis
     return [dict(r) for r in rows]
 
 
-# ── Messages (2-way chat with the logged-in user on the node) ───────────────
-# Admin -> agent messages are handed to the agent on its next check-in and
-# shown by the tray helper as a native dialog; a reply typed there comes
-# back via POST /api/agent/messages/reply. Same polling pattern as commands
-# — there's no push channel to a node, so delivery always waits for the
-# node's next check-in interval.
+# ── Force an immediate check-in ─────────────────────────────────────────────
+# Piggybacks on the same always-open control channel Live Terminal uses
+# (see app/terminal_hub.py) rather than opening anything new — the agent
+# treats a "checkin_now" push on that channel as a signal to skip the rest
+# of its current poll interval and check in right away, instead of waiting
+# it out. Same reachability requirement as Live Terminal: the node needs a
+# live control-channel connection (agent online and new enough to have one).
 
-class MessageIn(BaseModel):
-    message: str
-
-
-@router.get("/{node_id}/messages")
-async def list_messages(node_id: int, _: CurrentUser, db: DbDep) -> list[dict]:
-    db.row_factory = aiosqlite.Row
-    async with db.execute(
-        """
-        SELECT m.id, m.sender, m.message, m.created_at, m.delivered_at,
-               u.username AS created_by
-        FROM node_messages m
-        LEFT JOIN users u ON u.id = m.created_by
-        WHERE m.node_id = ?
-        ORDER BY m.created_at ASC
-        LIMIT 500
-        """,
-        (node_id,),
-    ) as cur:
-        rows = await cur.fetchall()
-    return [dict(r) for r in rows]
-
-
-@router.post("/{node_id}/messages", status_code=201)
-async def send_message(node_id: int, body: MessageIn, user: AnalystUser, db: DbDep) -> dict:
-    if not body.message.strip():
-        raise HTTPException(status_code=400, detail="message is required")
-    async with db.execute("SELECT id, has_tray FROM nodes WHERE id=? AND is_active=1", (node_id,)) as cur:
+@router.post("/{node_id}/checkin-now")
+async def checkin_now(node_id: int, _: AnalystUser, db: DbDep) -> dict:
+    async with db.execute("SELECT id FROM nodes WHERE id=? AND is_active=1", (node_id,)) as cur:
         row = await cur.fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="Node not found or decommissioned")
-    if not row[1]:
-        raise HTTPException(status_code=400, detail="This node has no tray helper running — there's no way to show it a message")
-
-    async with db.execute(
-        "INSERT INTO node_messages (node_id, sender, message, created_by) VALUES (?, 'admin', ?, ?)",
-        (node_id, body.message.strip(), user["id"]),
-    ) as cur:
-        message_id = cur.lastrowid
-    await db.commit()
-    return {"id": message_id}
+    agent = hub.get_agent(node_id)
+    if agent is None:
+        raise HTTPException(
+            status_code=409,
+            detail="This node has no live control-channel connection right now (agent offline, or too old to support it).",
+        )
+    await agent.send({"type": "checkin_now"})
+    return {"ok": True}
 
 
 # ── Live terminal ─────────────────────────────────────────────────────────

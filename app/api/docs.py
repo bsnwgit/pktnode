@@ -7,10 +7,10 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 
 from app.config import get_settings
-from app.dependencies import get_current_user
+from app.dependencies import CurrentUser
 
 router = APIRouter()
 
@@ -25,25 +25,35 @@ def _title_from_filename(filename: str) -> str:
     return " ".join(w if w.isupper() and len(w) <= 3 else w.capitalize() for w in words)
 
 
-@router.get("", dependencies=[Depends(get_current_user)])
-async def list_docs() -> list[dict]:
-    """List available documents, one per docs/*.md file, sorted by title."""
+def _is_admin_only(stem: str) -> bool:
+    return stem.upper().startswith("ADMIN_") or stem.upper().startswith("ADMIN-")
+
+
+@router.get("")
+async def list_docs(user: CurrentUser) -> list[dict]:
+    """List available documents, one per docs/*.md file, sorted by title.
+
+    Admin-only docs (ADMIN_*.md) are omitted for non-admin users.
+    """
     docs_dir = _docs_dir()
     if not docs_dir.is_dir():
         return []
     items = [
         {"slug": f.stem, "title": _title_from_filename(f.name)}
         for f in docs_dir.glob("*.md")
+        if user["role"] == "admin" or not _is_admin_only(f.stem)
     ]
     items.sort(key=lambda d: d["title"])
     return items
 
 
-@router.get("/{slug}", dependencies=[Depends(get_current_user)])
-async def get_doc(slug: str) -> dict:
+@router.get("/{slug}")
+async def get_doc(slug: str, user: CurrentUser) -> dict:
     """Return the raw markdown content of one doc, identified by filename stem."""
     if not re.fullmatch(r"[A-Za-z0-9_-]+", slug):
         raise HTTPException(400, "Invalid document identifier")
+    if _is_admin_only(slug) and user["role"] != "admin":
+        raise HTTPException(403, "Admin role required")
     path = _docs_dir() / f"{slug}.md"
     if not path.is_file():
         raise HTTPException(404, "Document not found")
