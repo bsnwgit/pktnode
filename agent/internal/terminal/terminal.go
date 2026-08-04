@@ -45,7 +45,11 @@ type ptySession interface {
 // Run reconnects with backoff for as long as stopCh is open. Each
 // successful connection resets the backoff, so a brief network blip
 // recovers in ~1s while a genuinely down server doesn't get hammered.
-func Run(serverURL, agentToken string, stopCh <-chan struct{}) {
+// onCheckinNow is called (non-blocking, from this goroutine) whenever the
+// server pushes a "checkin_now" message down this same control channel —
+// see agentloop.Run, which uses it to skip the rest of the current
+// check-in interval instead of waiting it out.
+func Run(serverURL, agentToken string, stopCh <-chan struct{}, onCheckinNow func()) {
 	backoff := time.Second
 	for {
 		select {
@@ -53,7 +57,7 @@ func Run(serverURL, agentToken string, stopCh <-chan struct{}) {
 			return
 		default:
 		}
-		runOnce(serverURL, agentToken, stopCh, func() { backoff = time.Second })
+		runOnce(serverURL, agentToken, stopCh, func() { backoff = time.Second }, onCheckinNow)
 		select {
 		case <-stopCh:
 			return
@@ -79,7 +83,7 @@ func wsURL(serverURL string) (string, error) {
 	return u.String(), nil
 }
 
-func runOnce(serverURL, agentToken string, stopCh <-chan struct{}, onConnected func()) {
+func runOnce(serverURL, agentToken string, stopCh <-chan struct{}, onConnected func(), onCheckinNow func()) {
 	target, err := wsURL(serverURL)
 	if err != nil {
 		log.Printf("terminal: bad server URL: %v", err)
@@ -114,6 +118,12 @@ func runOnce(serverURL, agentToken string, stopCh <-chan struct{}, onConnected f
 		}
 		var msg wireMsg
 		if err := json.Unmarshal(raw, &msg); err != nil {
+			continue
+		}
+		if msg.Type == "checkin_now" {
+			if onCheckinNow != nil {
+				onCheckinNow()
+			}
 			continue
 		}
 		mgr.handle(msg)

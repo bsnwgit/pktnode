@@ -7,7 +7,7 @@ import {
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
-import { api, terminalWsUrl, NodeDetail as NodeDetailType, CommandRecord, NodeMessage, GroupInfo, SpeedtestResult } from '../api/client'
+import { api, terminalWsUrl, NodeDetail as NodeDetailType, CommandRecord, GroupInfo, SpeedtestResult } from '../api/client'
 import { useAuth } from '../store/auth'
 import HelpButton from '../components/HelpButton'
 
@@ -87,7 +87,76 @@ function fmtTime(ts: string | null): string {
   return new Date(toUtc(ts)).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })
 }
 
-type Tab = 'overview' | 'software' | 'processes' | 'security' | 'metrics' | 'commands' | 'speedtest' | 'messages'
+function fmtBytes(n: number): string {
+  if (n < 1024) return `${n} B`
+  const units = ['KB', 'MB', 'GB', 'TB']
+  let v = n / 1024
+  let i = 0
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++ }
+  return `${v.toFixed(1)} ${units[i]}`
+}
+
+// ── Tab structure ────────────────────────────────────────────────────────────
+// Two levels: a small set of top-level tabs, most of which group a few
+// related subtabs. `Tab` is the flat set of leaf/content tabs — the thing
+// that actually decides what's rendered below — with MAIN_TABS/TAB_TO_MAIN
+// just describing how those leaves are grouped in the tab bar.
+
+type MainTabKey = 'overview' | 'system' | 'metrics' | 'utils' | 'unraid'
+type Tab =
+  | 'overview'
+  | 'software' | 'processes' | 'security' | 'settings'
+  | 'metrics' | 'network'
+  | 'speedtest' | 'commands' | 'storage' | 'disktools'
+  | 'unraid-array' | 'unraid-containers' | 'unraid-vms'
+
+const MAIN_TABS: { key: MainTabKey; label: string; subtabs: { key: Tab; label: string }[] }[] = [
+  { key: 'overview', label: 'Overview', subtabs: [] },
+  {
+    key: 'system', label: 'System', subtabs: [
+      { key: 'software', label: 'Software' },
+      { key: 'processes', label: 'Processing' },
+      { key: 'security', label: 'Security' },
+      { key: 'settings', label: 'Settings' },
+    ],
+  },
+  {
+    key: 'metrics', label: 'Metrics', subtabs: [
+      { key: 'metrics', label: 'System' },
+      { key: 'network', label: 'Network' },
+    ],
+  },
+  {
+    key: 'utils', label: 'Utils', subtabs: [
+      { key: 'commands', label: 'Commands' },
+      { key: 'storage', label: 'Storage' },
+      { key: 'disktools', label: 'Disk Tools' },
+      { key: 'speedtest', label: 'Speed Test' },
+    ],
+  },
+  {
+    // Only ever shown for os_type === 'unraid' — see visibleMainTabs in
+    // the component. Kept in this static list (rather than built
+    // conditionally) so TAB_TO_MAIN/SEARCHABLE_TABS stay simple lookups.
+    key: 'unraid', label: 'Unraid', subtabs: [
+      { key: 'unraid-array', label: 'Array' },
+      { key: 'unraid-containers', label: 'Containers' },
+      { key: 'unraid-vms', label: 'VMs' },
+    ],
+  },
+]
+
+const TAB_TO_MAIN: Record<Tab, MainTabKey> = {
+  overview: 'overview',
+  software: 'system', processes: 'system', security: 'system', settings: 'system',
+  metrics: 'metrics', network: 'metrics',
+  speedtest: 'utils', commands: 'utils', storage: 'utils', disktools: 'utils',
+  'unraid-array': 'unraid', 'unraid-containers': 'unraid', 'unraid-vms': 'unraid',
+}
+
+// Only leaf tabs that render a flat, filterable list get the search box —
+// Settings and Storage are forms/tool panels, not lists.
+const SEARCHABLE_TABS = new Set<Tab>(['software', 'processes', 'security', 'metrics', 'network', 'commands', 'speedtest'])
 
 const FIREWALL_STYLES: Record<string, string> = {
   enabled:  'bg-green-900/40 text-green-400 border border-green-700/40',
@@ -95,21 +164,19 @@ const FIREWALL_STYLES: Record<string, string> = {
   unknown:  'bg-gray-800 text-white border border-gray-700',
 }
 
-function MetricsChart({ history }: { history: NodeDetailType['metrics_history'] }) {
-  const data = [...history]
-    .filter(m => m.recorded_at)
-    .map(m => ({
-      ts: new Date(toUtc(m.recorded_at!)).getTime(),
-      cpu_pct: m.cpu_pct,
-      mem_pct: m.mem_pct,
-      disk_pct: m.disk_pct,
-    }))
-    .sort((a, b) => a.ts - b.ts)
-
+function HistoryChart({
+  data, series, yFormatter, yDomain = ['auto', 'auto'], emptyLabel,
+}: {
+  data: Array<{ ts: number } & Record<string, number | null>>
+  series: { key: string; name: string; color: string }[]
+  yFormatter: (v: number) => string
+  yDomain?: [number | string, number | string]
+  emptyLabel: string
+}) {
   if (data.length === 0) {
     return (
       <div className="h-52 flex items-center justify-center text-sm text-white border border-dashed border-gray-800 rounded-lg">
-        No metrics history yet
+        {emptyLabel}
       </div>
     )
   }
@@ -129,28 +196,173 @@ function MetricsChart({ history }: { history: NodeDetailType['metrics_history'] 
           tickLine={false}
         />
         <YAxis
-          domain={[0, 100]}
-          tickFormatter={v => `${v}%`}
+          domain={yDomain}
+          tickFormatter={v => yFormatter(v)}
           tick={{ fontSize: 10, fill: '#d1d5db' }}
           axisLine={false}
           tickLine={false}
-          width={40}
+          width={48}
         />
         <Tooltip
           contentStyle={{ background: '#111827', border: '1px solid #374151', borderRadius: 8, fontSize: 11 }}
           labelFormatter={v => new Date(v as number).toLocaleString()}
-          formatter={(val: number, name: string) => [`${val?.toFixed(1) ?? '—'}%`, name]}
+          formatter={(val: number, name: string) => [val === null || val === undefined ? '—' : yFormatter(val), name]}
         />
         <Legend iconSize={8} wrapperStyle={{ fontSize: 11, color: '#9ca3af' }} />
-        <Line type="monotone" dataKey="cpu_pct" name="CPU" stroke="#38bdf8" dot={false} strokeWidth={2} connectNulls={false} />
-        <Line type="monotone" dataKey="mem_pct" name="Memory" stroke="#a78bfa" dot={false} strokeWidth={2} connectNulls={false} />
-        <Line type="monotone" dataKey="disk_pct" name="Disk" stroke="#fb923c" dot={false} strokeWidth={2} connectNulls={false} />
+        {series.map(s => (
+          <Line key={s.key} type="monotone" dataKey={s.key} name={s.name} stroke={s.color} dot={false} strokeWidth={2} connectNulls={false} />
+        ))}
       </LineChart>
     </ResponsiveContainer>
   )
 }
 
+function MetricsChart({ history }: { history: NodeDetailType['metrics_history'] }) {
+  const data = [...history]
+    .filter(m => m.recorded_at)
+    .map(m => ({
+      ts: new Date(toUtc(m.recorded_at!)).getTime(),
+      cpu_pct: m.cpu_pct,
+      mem_pct: m.mem_pct,
+      disk_pct: m.disk_pct,
+    }))
+    .sort((a, b) => a.ts - b.ts)
+
+  return (
+    <HistoryChart
+      data={data}
+      yDomain={[0, 100]}
+      yFormatter={v => `${v}%`}
+      emptyLabel="No metrics history yet"
+      series={[
+        { key: 'cpu_pct', name: 'CPU', color: '#38bdf8' },
+        { key: 'mem_pct', name: 'Memory', color: '#a78bfa' },
+        { key: 'disk_pct', name: 'Disk', color: '#fb923c' },
+      ]}
+    />
+  )
+}
+
+function NetworkChart({ history }: { history: NodeDetailType['network_history'] }) {
+  const data = [...history]
+    .filter(m => m.recorded_at)
+    .map(m => ({
+      ts: new Date(toUtc(m.recorded_at!)).getTime(),
+      sent_mbps: m.sent_mbps,
+      recv_mbps: m.recv_mbps,
+    }))
+    .sort((a, b) => a.ts - b.ts)
+
+  return (
+    <HistoryChart
+      data={data}
+      yFormatter={v => `${v.toFixed(1)} Mbps`}
+      emptyLabel="No network history yet"
+      series={[
+        { key: 'sent_mbps', name: 'Upload', color: '#38bdf8' },
+        { key: 'recv_mbps', name: 'Download', color: '#34d399' },
+      ]}
+    />
+  )
+}
+
 const isInFlight = (c: CommandRecord) => c.status === 'pending' || c.status === 'sent' || c.status === 'running'
+const running = (c?: CommandRecord) => !!c && isInFlight(c)
+
+const DISK_TOOL_TYPES = ['disk_largest_files', 'disk_cleanup_temp', 'disk_health_check']
+
+// ── Storage subtab result renderers — each disk tool command reports back
+// a JSON blob shaped differently, so each gets its own small formatter
+// instead of falling back to a raw JSON dump like the generic Commands tab.
+
+function LargestFilesResult({ cmd }: { cmd?: CommandRecord }) {
+  if (!cmd) return <p className="text-xs text-white">Not run yet.</p>
+  if (running(cmd)) return <p className="text-xs text-white">Waiting on the node's next check-in…</p>
+  if (cmd.status === 'failed') return <p className="text-xs text-red-400">{cmd.result?.output || 'Scan failed'}</p>
+  try {
+    const data = JSON.parse(cmd.result?.output || '{}') as { path?: string; files?: { path: string; size_bytes: number }[] }
+    if (!data.files || data.files.length === 0) {
+      return <p className="text-xs text-white">No files found under {data.path || '/'}.</p>
+    }
+    return (
+      <div className="border border-gray-800 rounded-lg overflow-hidden">
+        <table className="w-full text-xs">
+          <tbody className="divide-y divide-gray-800/50">
+            {data.files.map((f, i) => (
+              <tr key={i} className="hover:bg-gray-800/30 transition-colors">
+                <td className="px-3 py-1.5 text-white font-mono truncate max-w-md" title={f.path}>{f.path}</td>
+                <td className="px-3 py-1.5 text-white text-right whitespace-nowrap">{fmtBytes(f.size_bytes)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <p className="text-[10px] text-white px-3 py-1.5 border-t border-gray-800">
+          Scanned {fmtTime(cmd.completed_at)} · under {data.path || '/'}
+        </p>
+      </div>
+    )
+  } catch {
+    return <p className="text-xs text-white font-mono">{cmd.result?.output || '—'}</p>
+  }
+}
+
+function CleanupTempResult({ cmd }: { cmd?: CommandRecord }) {
+  if (!cmd) return <p className="text-xs text-white">Not run yet.</p>
+  if (running(cmd)) return <p className="text-xs text-white">Waiting on the node's next check-in…</p>
+  if (cmd.status === 'failed') return <p className="text-xs text-red-400">{cmd.result?.output || 'Cleanup failed'}</p>
+  try {
+    const data = JSON.parse(cmd.result?.output || '{}') as {
+      dry_run: boolean; dir: string; max_age_days: number
+      items_cleared: number; items_skipped: number; freed_bytes: number
+    }
+    return (
+      <p className="text-xs text-white">
+        {data.dry_run ? 'Preview: would clear ' : 'Cleared '}
+        <span className="text-white font-medium">{data.items_cleared}</span> item{data.items_cleared === 1 ? '' : 's'}
+        {' '}(<span className="text-white font-medium">{fmtBytes(data.freed_bytes)}</span>) from {data.dir}
+        {' — '}older than {data.max_age_days} day{data.max_age_days === 1 ? '' : 's'}
+        {' · '}{fmtTime(cmd.completed_at)}
+      </p>
+    )
+  } catch {
+    return <p className="text-xs text-white font-mono">{cmd.result?.output || '—'}</p>
+  }
+}
+
+function DiskHealthResult({ cmd }: { cmd?: CommandRecord }) {
+  if (!cmd) return <p className="text-xs text-white">Not run yet.</p>
+  if (running(cmd)) return <p className="text-xs text-white">Waiting on the node's next check-in…</p>
+  if (cmd.status === 'failed') return <p className="text-xs text-red-400">{cmd.result?.output || 'Health check failed'}</p>
+  try {
+    const rows = JSON.parse(cmd.result?.output || '[]') as Array<Record<string, string>>
+    if (rows.length === 0) return <p className="text-xs text-white">No disks reported.</p>
+    if (rows[0].status === 'unavailable') {
+      return <p className="text-xs text-white">{rows[0].detail || 'Not available on this platform.'}</p>
+    }
+    return (
+      <div className="border border-gray-800 rounded-lg overflow-hidden">
+        <table className="w-full text-xs">
+          <tbody className="divide-y divide-gray-800/50">
+            {rows.map((r, i) => {
+              const label = r.device || r.disk || r.DeviceId || r.FriendlyName || `Disk ${i + 1}`
+              const status = r.smart_status || r.HealthStatus || JSON.stringify(r)
+              const healthy = /verified|ok|healthy/i.test(status)
+              return (
+                <tr key={i} className="hover:bg-gray-800/30 transition-colors">
+                  <td className="px-3 py-1.5 text-white font-mono">{label}</td>
+                  <td className={`px-3 py-1.5 text-right ${healthy ? 'text-green-400' : 'text-white'}`}>{status}</td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+        <p className="text-[10px] text-white px-3 py-1.5 border-t border-gray-800">Checked {fmtTime(cmd.completed_at)}</p>
+      </div>
+    )
+  } catch {
+    return <p className="text-xs text-white font-mono">{cmd.result?.output || '—'}</p>
+  }
+}
 
 // Single popup for every direct command interaction with a node: fire an
 // action, and watch it move through pending -> sent -> completed/failed in
@@ -226,6 +438,7 @@ function CommandConsoleModal({
               <option value="kill_process">Kill process</option>
               <option value="reboot">Reboot node</option>
               <option value="shutdown">Shutdown node</option>
+              <option value="update_agent">Update agent</option>
             </select>
             {type === 'restart_service' && (
               <input value={serviceName} onChange={e => setServiceName(e.target.value)} required placeholder="Service name"
@@ -239,6 +452,11 @@ function CommandConsoleModal({
           {(type === 'reboot' || type === 'shutdown') && (
             <p className="text-xs text-amber-400 bg-amber-900/20 border border-amber-700/40 rounded-lg px-3 py-2">
               This will {type} the node the next time it checks in. Make sure that's intended.
+            </p>
+          )}
+          {type === 'update_agent' && (
+            <p className="text-xs text-amber-400 bg-amber-900/20 border border-amber-700/40 rounded-lg px-3 py-2">
+              Downloads the current agent release and restarts the agent on this node's next check-in.
             </p>
           )}
           {error && <p className="text-xs text-red-400">{error}</p>}
@@ -473,9 +691,7 @@ export default function NodeDetail() {
   const [showOverrideCode, setShowOverrideCode] = useState(false)
   const [editingName, setEditingName] = useState(false)
   const [displayName, setDisplayName] = useState('')
-  const [messages, setMessages] = useState<NodeMessage[]>([])
-  const [newMessage, setNewMessage] = useState('')
-  const [sendingMessage, setSendingMessage] = useState(false)
+  const [latestAgentVersion, setLatestAgentVersion] = useState<string | null>(null)
 
   const load = async () => {
     if (!id) return
@@ -486,50 +702,42 @@ export default function NodeDetail() {
       setDisplayName(n.display_name || '')
       setCommands(await api.getNodeCommands(Number(id)))
       setSpeedtests(await api.getNodeSpeedtests(Number(id)))
-      setMessages(await api.getNodeMessages(Number(id)))
     } finally {
       setLoading(false)
     }
   }
 
   useEffect(() => { load() }, [id])
+  useEffect(() => { if (canAct) api.getLatestAgentVersion().then(r => setLatestAgentVersion(r.version)).catch(() => {}) }, [canAct])
 
-  // A speed test only resolves on the node's next check-in (same as any
-  // other queued command) — poll both the command and the results table
-  // while one's in flight so "Run Speedtest Now" updates in place instead
-  // of requiring a manual refresh.
+  // A speed test or disk tool only resolves on the node's next check-in
+  // (same as any other queued command) — poll both the command and (for
+  // speed tests) the results table while one's in flight so the button
+  // updates in place instead of requiring a manual refresh.
+  const isUnraidActionType = (t: string) => t.startsWith('docker_') || t.startsWith('vm_')
   useEffect(() => {
-    if (tab !== 'speedtest' || !id) return
-    if (!commands.some(c => c.command_type === 'run_speedtest' && isInFlight(c))) return
+    if (!id) return
+    const watchingUnraidAction = (tab === 'unraid-containers' || tab === 'unraid-vms') &&
+      commands.some(c => isUnraidActionType(c.command_type) && isInFlight(c))
+    const watching =
+      (tab === 'speedtest' && commands.some(c => c.command_type === 'run_speedtest' && isInFlight(c))) ||
+      (tab === 'disktools' && commands.some(c => DISK_TOOL_TYPES.includes(c.command_type) && isInFlight(c))) ||
+      watchingUnraidAction
+    if (!watching) return
     const poll = setInterval(async () => {
-      setCommands(await api.getNodeCommands(Number(id)))
-      setSpeedtests(await api.getNodeSpeedtests(Number(id)))
+      const fresh = await api.getNodeCommands(Number(id))
+      setCommands(fresh)
+      if (tab === 'speedtest') setSpeedtests(await api.getNodeSpeedtests(Number(id)))
+      // Docker/VM actions trigger the agent's own immediate follow-up
+      // inventory refresh (see agentloop.go) right after — give it a
+      // couple seconds to land, then reload the node so the
+      // Containers/VMs table reflects the new state without a manual page reload.
+      if (watchingUnraidAction && !fresh.some(c => isUnraidActionType(c.command_type) && isInFlight(c))) {
+        setTimeout(() => { load() }, 2000)
+      }
     }, 3000)
     return () => clearInterval(poll)
   }, [tab, id, commands])
-
-  // Messages come back via the node's own check-in interval (no push
-  // channel), so poll quietly while this tab is open to pick up replies —
-  // same pattern as Alerts' silent auto-resolve poll.
-  useEffect(() => {
-    if (tab !== 'messages' || !id) return
-    const poll = setInterval(async () => {
-      setMessages(await api.getNodeMessages(Number(id)))
-    }, 10_000)
-    return () => clearInterval(poll)
-  }, [tab, id])
-
-  const sendMessage = async () => {
-    if (!id || !newMessage.trim()) return
-    setSendingMessage(true)
-    try {
-      await api.sendNodeMessage(Number(id), newMessage.trim())
-      setNewMessage('')
-      setMessages(await api.getNodeMessages(Number(id)))
-    } finally {
-      setSendingMessage(false)
-    }
-  }
 
   const saveDisplayName = async () => {
     if (!id) return
@@ -595,7 +803,7 @@ export default function NodeDetail() {
       'This cannot be undone.'
     )) return
     await api.deleteNode(Number(id))
-    navigate('/nodes?status=decommissioned')
+    navigate('/nodes')
   }
 
   const refreshCommands = async () => {
@@ -615,10 +823,78 @@ export default function NodeDetail() {
     }
   }
 
+  const [queuingUpdate, setQueuingUpdate] = useState(false)
+  const updateAgentNow = async () => {
+    if (!id || !node) return
+    if (!confirm(
+      `Update the agent on ${node.display_name || node.hostname}?\n\n` +
+      'It downloads the current release and restarts itself on its next check-in.'
+    )) return
+    setQueuingUpdate(true)
+    try {
+      await api.queueCommand(Number(id), 'update_agent', {})
+      await refreshCommands()
+    } finally {
+      setQueuingUpdate(false)
+    }
+  }
+
+  const [checkingIn, setCheckingIn] = useState(false)
+  const checkinNow = async () => {
+    if (!id) return
+    setCheckingIn(true)
+    try {
+      await api.checkinNow(Number(id))
+      // The check-in itself happens on the node a moment after it receives
+      // the push, not synchronously with this request — give it a couple
+      // seconds before pulling the refreshed node/commands/speedtests state.
+      setTimeout(() => { load() }, 3000)
+    } catch (err: any) {
+      alert(err.message || 'Failed to request an immediate check-in')
+    } finally {
+      setCheckingIn(false)
+    }
+  }
+
   const killProcess = async (pid: number, name: string) => {
     if (!id || !confirm(`Kill process "${name}" (PID ${pid})?\n\nThis runs the next time the node checks in. Killing the wrong process can crash apps or destabilize the machine — make sure that's intended.`)) return
     await api.queueCommand(Number(id), 'kill_process', { pid })
     await refreshCommands()
+  }
+
+  const [queuingDiskTool, setQueuingDiskTool] = useState<string | null>(null)
+  const runDiskTool = async (type: string, payload: Record<string, unknown> = {}) => {
+    if (!id) return
+    setQueuingDiskTool(type)
+    try {
+      await api.queueCommand(Number(id), type, payload)
+      await refreshCommands()
+    } finally {
+      setQueuingDiskTool(null)
+    }
+  }
+  const cleanupTempNow = async () => {
+    if (!confirm(
+      "Delete files older than 1 day from this node's OS temp directory?\n\n" +
+      'This runs on the node\'s next check-in and cannot be undone.'
+    )) return
+    await runDiskTool('disk_cleanup_temp', { dry_run: false, max_age_days: 1 })
+  }
+
+  // Keyed by `${type}:${name}` so only the specific button just clicked
+  // disables, not every row — queued fire-and-forget, same as the
+  // Processes tab's Kill button; check the Commands tab for the result.
+  const [queuingAction, setQueuingAction] = useState<string | null>(null)
+  const runNamedAction = async (type: string, name: string) => {
+    if (!id) return
+    const key = `${type}:${name}`
+    setQueuingAction(key)
+    try {
+      await api.queueCommand(Number(id), type, { name })
+      await refreshCommands()
+    } finally {
+      setQueuingAction(null)
+    }
   }
 
   if (loading || !node) {
@@ -633,6 +909,7 @@ export default function NodeDetail() {
   const filteredProcesses = node.processes.filter(p => matches(p.pid, p.name, p.username))
   const filteredPorts = node.ports.filter(p => matches(p.protocol, p.port, p.process_name, p.pid))
   const filteredMetrics = node.metrics_history.filter(m => matches(fmtTime(m.recorded_at)))
+  const filteredNetwork = node.network_history.filter(m => matches(fmtTime(m.recorded_at)))
   const filteredCommands = commands.filter(c => matches(c.command_type, c.status, c.created_by, c.result?.output))
   const filteredSpeedtests = speedtests.filter(s => matches(s.status, s.triggered_by, s.server_fqdn, s.error))
 
@@ -641,6 +918,7 @@ export default function NodeDetail() {
     processes: filteredProcesses,
     security: filteredPorts,
     metrics: filteredMetrics,
+    network: filteredNetwork,
     commands: filteredCommands,
     speedtest: filteredSpeedtests,
   }
@@ -651,9 +929,25 @@ export default function NodeDetail() {
   const pagedProcesses = filteredProcesses.slice(pageStart, pageStart + pageSize)
   const pagedPorts = filteredPorts.slice(pageStart, pageStart + pageSize)
   const pagedMetrics = filteredMetrics.slice(pageStart, pageStart + pageSize)
+  const pagedNetwork = filteredNetwork.slice(pageStart, pageStart + pageSize)
   const pagedCommands = filteredCommands.slice(pageStart, pageStart + pageSize)
   const pagedSpeedtests = filteredSpeedtests.slice(pageStart, pageStart + pageSize)
   const speedtestRunning = commands.some(c => c.command_type === 'run_speedtest' && isInFlight(c))
+
+  const mainTab = TAB_TO_MAIN[tab]
+  // Disk Tools' commands (largest-files scan, temp cleanup, SMART health)
+  // have no Supervisor API equivalent — nothing to run them against on
+  // Home Assistant OS, so the subtab is hidden there rather than showing
+  // buttons that can only ever fail.
+  const visibleMainTabs = MAIN_TABS
+    .filter(m => m.key !== 'unraid' || node.os_type === 'unraid')
+    .map(m => m.key === 'utils' && node.os_type === 'Home Assistant OS'
+      ? { ...m, subtabs: m.subtabs.filter(s => s.key !== 'disktools') }
+      : m)
+  const activeGroup = visibleMainTabs.find(m => m.key === mainTab)!
+  const latestLargestFiles = commands.find(c => c.command_type === 'disk_largest_files')
+  const latestCleanup = commands.find(c => c.command_type === 'disk_cleanup_temp')
+  const latestHealthCheck = commands.find(c => c.command_type === 'disk_health_check')
 
   return (
     <div className="space-y-4">
@@ -689,29 +983,6 @@ export default function NodeDetail() {
               className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors">
               Live Terminal
             </button>
-            <button onClick={() => openConsole(null)}
-              title="Queues an action for the node's next check-in — not live, kept in history"
-              className="px-4 py-2 text-sm bg-gray-800 hover:bg-gray-700 border border-gray-700 text-white rounded-lg transition-colors">
-              Queue Command
-            </button>
-            {user?.role === 'admin' && (
-              <button onClick={() => setShowOverrideCode(true)}
-                className="px-4 py-2 text-sm bg-gray-800 hover:bg-gray-700 border border-gray-700 text-white rounded-lg transition-colors">
-                Override Code
-              </button>
-            )}
-            {user?.role === 'admin' && node.is_active && (
-              <button onClick={decommission}
-                className="px-4 py-2 text-sm bg-gray-800 hover:bg-gray-700 border border-gray-700 text-white rounded-lg transition-colors">
-                Decommission &amp; Revoke
-              </button>
-            )}
-            {user?.role === 'admin' && !node.is_active && (
-              <button onClick={deletePermanently}
-                className="px-4 py-2 text-sm bg-red-900/40 hover:bg-red-900/60 border border-red-700/50 text-red-300 rounded-lg transition-colors">
-                Delete Permanently
-              </button>
-            )}
           </div>
         )}
       </div>
@@ -740,19 +1011,19 @@ export default function NodeDetail() {
 
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-1 bg-gray-900 border border-gray-800 rounded-xl p-1 w-fit">
-          {(['overview', 'software', 'processes', 'security', 'metrics', 'commands', 'speedtest', 'messages'] as Tab[]).map(t => (
+          {visibleMainTabs.map(m => (
             <button
-              key={t}
-              onClick={() => setTab(t)}
-              className={`text-sm px-4 py-1.5 rounded-lg capitalize transition-colors ${
-                tab === t ? 'bg-blue-600/20 text-blue-300 font-medium' : 'text-white hover:text-white'
+              key={m.key}
+              onClick={() => setTab(m.subtabs[0]?.key ?? 'overview')}
+              className={`text-sm px-4 py-1.5 rounded-lg transition-colors ${
+                mainTab === m.key ? 'bg-blue-600/20 text-blue-300 font-medium' : 'text-white hover:text-white'
               }`}
             >
-              {t}
+              {m.label}
             </button>
           ))}
         </div>
-        {tab !== 'overview' && tab !== 'messages' && (
+        {SEARCHABLE_TABS.has(tab) && (
           <input
             type="text"
             placeholder={`Search ${tab}…`}
@@ -763,64 +1034,82 @@ export default function NodeDetail() {
         )}
       </div>
 
-      {tab === 'overview' && (
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-3">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
-            <div><p className="text-xs text-white">Manufacturer / Model</p><p className="text-white">{node.manufacturer || '—'} {node.model || ''}</p></div>
-            <div><p className="text-xs text-white">Serial number</p><p className="text-white font-mono">{node.serial_number || '—'}</p></div>
-            <div><p className="text-xs text-white">Agent version</p><p className="text-white">{node.agent_version || '—'}</p></div>
-            <div><p className="text-xs text-white">IP address</p><p className="text-white font-mono">{node.ip_address || '—'}</p></div>
-            <div><p className="text-xs text-white">Domain / Workgroup</p><p className="text-white">{node.domain_or_workgroup || '—'}</p></div>
-            <div><p className="text-xs text-white">Current user</p><p className="text-white">{node.current_user || '—'}</p></div>
-            <div><p className="text-xs text-white">Timezone</p><p className="text-white">{node.timezone || '—'}</p></div>
-            <div><p className="text-xs text-white">First seen</p><p className="text-white">{fmtTime(node.first_seen_at)}</p></div>
-          </div>
-          <div>
-            <p className="text-xs text-white mb-2">Groups</p>
-            <div className="flex items-center gap-2 flex-wrap">
-              {node.tags.map(t => (
-                <span key={t} className="inline-flex items-center gap-1.5 bg-gray-800 border border-gray-700 rounded-full px-2.5 py-1 text-xs text-white">
-                  {t}
-                  {canAct && (
-                    <button onClick={() => removeGroup(t)} className="text-white hover:text-red-400 leading-none">×</button>
-                  )}
-                </span>
-              ))}
-              {node.tags.length === 0 && <span className="text-sm text-white">No groups assigned</span>}
-            </div>
-            {canAct && (
-              allGroups.filter(g => !node.tags.includes(g.name)).length > 0 ? (
-                <select
-                  value=""
-                  onChange={e => { if (e.target.value) addGroup(e.target.value) }}
-                  disabled={savingGroups}
-                  className="mt-2 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white disabled:opacity-50"
-                >
-                  <option value="">Add to a group…</option>
-                  {allGroups.filter(g => !node.tags.includes(g.name)).map(g => (
-                    <option key={g.name} value={g.name}>{g.name}</option>
-                  ))}
-                </select>
-              ) : (
-                <p className="text-xs text-white mt-2">
-                  {allGroups.length === 0 ? 'No groups created yet — create one in Settings → Groups.' : 'This device is already in every group.'}
-                </p>
-              )
-            )}
-            <p className="text-xs text-white mt-3 mb-2">Host down alerts</p>
-            <select
-              value={node.alert_host_down_override === null ? 'inherit' : node.alert_host_down_override ? 'on' : 'off'}
-              onChange={e => setHostDownOverride(e.target.value)}
-              disabled={!canAct || savingHostDownOverride}
-              className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white disabled:opacity-50"
+      {activeGroup.subtabs.length > 0 && (
+        <div className="flex items-center gap-1 bg-gray-900/60 border border-gray-800 rounded-xl p-1 w-fit -mt-2">
+          {activeGroup.subtabs.map(s => (
+            <button
+              key={s.key}
+              onClick={() => setTab(s.key)}
+              className={`text-xs px-3 py-1.5 rounded-lg transition-colors ${
+                tab === s.key ? 'bg-blue-600/20 text-blue-300 font-medium' : 'text-white hover:text-white'
+              }`}
             >
-              <option value="inherit">Inherit from Settings</option>
-              <option value="on">Always alert</option>
-              <option value="off">Never alert</option>
-            </select>
+              {s.label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {tab === 'overview' && (
+        <div className="space-y-4">
+          {canAct && (
+            <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
+              <p className="text-xs text-white mb-3">Actions</p>
+              <div className="flex flex-wrap gap-2">
+                <button onClick={checkinNow} disabled={checkingIn}
+                  title="Ask the node to check in right now over its live control channel, instead of waiting for its next scheduled check-in"
+                  className="px-4 py-2 text-sm bg-gray-800 hover:bg-gray-700 border border-gray-700 text-white rounded-lg transition-colors disabled:opacity-50">
+                  {checkingIn ? 'Checking in…' : 'Check In Now'}
+                </button>
+                {user?.role === 'admin' && (
+                  <button onClick={() => setShowOverrideCode(true)}
+                    className="px-4 py-2 text-sm bg-gray-800 hover:bg-gray-700 border border-gray-700 text-white rounded-lg transition-colors">
+                    Override Code
+                  </button>
+                )}
+                {user?.role === 'admin' && node.is_active && (
+                  <button onClick={decommission}
+                    className="px-4 py-2 text-sm bg-gray-800 hover:bg-gray-700 border border-gray-700 text-white rounded-lg transition-colors">
+                    Decommission &amp; Revoke
+                  </button>
+                )}
+                {user?.role === 'admin' && (!node.is_active || node.status === 'pending') && (
+                  <button onClick={deletePermanently}
+                    className="px-4 py-2 text-sm bg-red-900/40 hover:bg-red-900/60 border border-red-700/50 text-red-300 rounded-lg transition-colors">
+                    Delete Permanently
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
+          <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
+            <p className="text-xs text-white mb-3">Details</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+              <div><p className="text-xs text-white">Manufacturer / Model</p><p className="text-white">{node.manufacturer || '—'} {node.model || ''}</p></div>
+              <div><p className="text-xs text-white">Serial number</p><p className="text-white font-mono">{node.serial_number || '—'}</p></div>
+              <div>
+                <p className="text-xs text-white">Agent version</p>
+                <p className="text-white flex items-center gap-2">
+                  {node.agent_version || '—'}
+                  {canAct && latestAgentVersion && node.agent_version && node.agent_version !== latestAgentVersion && (
+                    <button onClick={updateAgentNow} disabled={queuingUpdate}
+                      className="text-xs text-blue-300 hover:text-blue-200 underline disabled:opacity-50">
+                      {queuingUpdate ? 'Queuing…' : `Update to v${latestAgentVersion}`}
+                    </button>
+                  )}
+                </p>
+              </div>
+              <div><p className="text-xs text-white">IP address</p><p className="text-white font-mono">{node.ip_address || '—'}</p></div>
+              <div><p className="text-xs text-white">Domain / Workgroup</p><p className="text-white">{node.domain_or_workgroup || '—'}</p></div>
+              <div><p className="text-xs text-white">Current user</p><p className="text-white">{node.current_user || '—'}</p></div>
+              <div><p className="text-xs text-white">Timezone</p><p className="text-white">{node.timezone || '—'}</p></div>
+              <div><p className="text-xs text-white">First seen</p><p className="text-white">{fmtTime(node.first_seen_at)}</p></div>
+            </div>
           </div>
-          <div>
-            <p className="text-xs text-white mb-2">Network interfaces</p>
+
+          <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
+            <p className="text-xs text-white mb-3">Network interfaces</p>
             {node.interfaces.length === 0 ? <p className="text-sm text-white">No interface data yet.</p> : (
               <div className="space-y-1.5">
                 {node.interfaces.map(i => (
@@ -993,6 +1282,57 @@ export default function NodeDetail() {
         </div>
       )}
 
+      {tab === 'settings' && (
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
+          <div>
+            <p className="text-xs text-white mb-2">Groups</p>
+            <div className="flex items-center gap-2 flex-wrap">
+              {node.tags.map(t => (
+                <span key={t} className="inline-flex items-center gap-1.5 bg-gray-800 border border-gray-700 rounded-full px-2.5 py-1 text-xs text-white">
+                  {t}
+                  {canAct && (
+                    <button onClick={() => removeGroup(t)} className="text-white hover:text-red-400 leading-none">×</button>
+                  )}
+                </span>
+              ))}
+              {node.tags.length === 0 && <span className="text-sm text-white">No groups assigned</span>}
+            </div>
+            {canAct && (
+              allGroups.filter(g => !node.tags.includes(g.name)).length > 0 ? (
+                <select
+                  value=""
+                  onChange={e => { if (e.target.value) addGroup(e.target.value) }}
+                  disabled={savingGroups}
+                  className="mt-2 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white disabled:opacity-50"
+                >
+                  <option value="">Add to a group…</option>
+                  {allGroups.filter(g => !node.tags.includes(g.name)).map(g => (
+                    <option key={g.name} value={g.name}>{g.name}</option>
+                  ))}
+                </select>
+              ) : (
+                <p className="text-xs text-white mt-2">
+                  {allGroups.length === 0 ? 'No groups created yet — create one in Settings → Groups.' : 'This device is already in every group.'}
+                </p>
+              )
+            )}
+          </div>
+          <div>
+            <p className="text-xs text-white mb-2">Host down alerts</p>
+            <select
+              value={node.alert_host_down_override === null ? 'inherit' : node.alert_host_down_override ? 'on' : 'off'}
+              onChange={e => setHostDownOverride(e.target.value)}
+              disabled={!canAct || savingHostDownOverride}
+              className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white disabled:opacity-50"
+            >
+              <option value="inherit">Inherit from Settings</option>
+              <option value="on">Always alert</option>
+              <option value="off">Never alert</option>
+            </select>
+          </div>
+        </div>
+      )}
+
       {tab === 'metrics' && (
         <div className="space-y-4">
           <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
@@ -1045,11 +1385,70 @@ export default function NodeDetail() {
         </div>
       )}
 
+      {tab === 'network' && (
+        <div className="space-y-4">
+          <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+            <p className="text-xs text-white mb-2">History</p>
+            <NetworkChart history={node.network_history} />
+          </div>
+          <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+            {filteredNetwork.length > 0 && (
+              <div className="flex items-center justify-center gap-6 px-5 py-3 border-b border-gray-800">
+                <Pagination page={page} totalPages={totalPages} onChange={setPage} />
+                <div className="flex items-center gap-2">
+                  <label htmlFor="network-per-page" className="text-xs text-white">Rows per page:</label>
+                  <select
+                    id="network-per-page"
+                    value={pageSize}
+                    onChange={e => changePageSize(Number(e.target.value))}
+                    className="text-sm bg-gray-800 border border-gray-700 text-white rounded-lg px-2 py-1 focus:outline-none focus:border-blue-500"
+                  >
+                    {PAGE_SIZE_OPTIONS.map(size => (
+                      <option key={size} value={size}>{size}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            )}
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-800">
+                  <th className="px-5 py-3 text-left text-xs font-medium text-white">Time</th>
+                  <th className="px-5 py-3 text-left text-xs font-medium text-white">Upload</th>
+                  <th className="px-5 py-3 text-left text-xs font-medium text-white">Download</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-800/50">
+                {pagedNetwork.map((m, i) => (
+                  <tr key={i} className="hover:bg-gray-800/30 transition-colors">
+                    <td className="px-5 py-2 text-white text-xs">{fmtTime(m.recorded_at)}</td>
+                    <td className="px-5 py-2 text-white text-xs">{m.sent_mbps !== null ? `${m.sent_mbps.toFixed(1)} Mbps` : '—'}</td>
+                    <td className="px-5 py-2 text-white text-xs">{m.recv_mbps !== null ? `${m.recv_mbps.toFixed(1)} Mbps` : '—'}</td>
+                  </tr>
+                ))}
+                {filteredNetwork.length === 0 && (
+                  <tr><td colSpan={3} className="px-5 py-8 text-center text-sm text-white">{node.network_history.length === 0 ? 'No network history yet' : 'No rows match your search'}</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {tab === 'commands' && (
         <div className="space-y-3">
-          <p className="text-xs text-white">
-            Queued, logged actions — use the Queue Command button above to add one, or Live Terminal for an instant interactive shell.
-          </p>
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <p className="text-xs text-white">
+              Queued, logged actions — picked up on the node's next check-in. Use Live Terminal instead for an instant interactive shell.
+            </p>
+            {canAct && (
+              <button onClick={() => openConsole(null)}
+                title="Queues an action for the node's next check-in — not live, kept in history"
+                className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors disabled:opacity-50 whitespace-nowrap">
+                Queue Command
+              </button>
+            )}
+          </div>
           <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
           {filteredCommands.length > 0 && (
             <div className="flex items-center justify-center gap-6 px-5 py-3 border-b border-gray-800">
@@ -1170,54 +1569,307 @@ export default function NodeDetail() {
         </div>
       )}
 
-      {tab === 'messages' && (
-        <div className="space-y-3">
-          {!node.has_tray && (
-            <div className="bg-amber-900/20 border border-amber-700/40 text-amber-300 text-sm rounded-xl px-4 py-3">
-              This node has no status-icon tray running — it's a CLI-only/headless system (or the tray isn't installed) with no way to show a message to anyone. Sending is disabled.
-            </div>
-          )}
-          <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden flex flex-col" style={{ height: '32rem' }}>
-            <div className="flex-1 overflow-y-auto p-4 space-y-3">
-              {messages.length === 0 && (
-                <p className="text-sm text-white text-center py-8">
-                  No messages yet. Messages are delivered on the node's next check-in — there's no live push, so replies can take a bit to show up here.
-                </p>
-              )}
-              {messages.map(m => (
-                <div key={m.id} className={`flex ${m.sender === 'admin' ? 'justify-end' : 'justify-start'}`}>
-                  <div className={`max-w-[70%] rounded-xl px-3 py-2 ${
-                    m.sender === 'admin' ? 'bg-blue-600/30 border border-blue-700/40' : 'bg-gray-800 border border-gray-700'
-                  }`}>
-                    <p className="text-sm text-white whitespace-pre-wrap break-words">{m.message}</p>
-                    <p className="text-[10px] text-white mt-1">
-                      {m.sender === 'admin' ? (m.created_by || 'admin') : 'user'} · {fmtTime(m.created_at)}
-                      {m.sender === 'admin' && !m.delivered_at && ' · queued'}
-                    </p>
+      {tab === 'storage' && (
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
+          <p className="text-xs text-white mb-3">Volumes</p>
+          {node.disks.length === 0 ? (
+            <p className="text-sm text-white">No disk inventory yet.</p>
+          ) : (
+            <div className="space-y-3">
+              {node.disks.map(d => (
+                <div key={d.mount_point}>
+                  <div className="flex items-center justify-between text-xs text-white mb-1">
+                    <span className="font-mono">{d.mount_point}</span>
+                    <span>{d.free_gb !== null && d.total_gb !== null ? `${d.free_gb.toFixed(0)} / ${d.total_gb.toFixed(0)} GB free` : '—'}</span>
                   </div>
+                  <div className="h-2 bg-gray-800 rounded-full overflow-hidden">
+                    <div className="h-full bg-blue-500" style={{ width: `${Math.min(100, Math.max(0, d.used_pct ?? 0))}%` }} />
+                  </div>
+                  <p className="text-[10px] text-white mt-1">
+                    {d.device || '—'} · {d.fs_type || '—'} · {d.used_pct !== null ? `${d.used_pct.toFixed(0)}% used` : '—'}
+                  </p>
                 </div>
               ))}
             </div>
-            {canAct && node.has_tray && (
-              <div className="border-t border-gray-800 p-3 flex items-end gap-2">
-                <textarea
-                  value={newMessage}
-                  onChange={e => setNewMessage(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage() } }}
-                  placeholder="Message the logged-in user… (delivered on next check-in)"
-                  rows={2}
-                  className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 resize-none focus:outline-none focus:border-blue-500"
-                />
+          )}
+        </div>
+      )}
+
+      {tab === 'disktools' && (
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-5">
+          <p className="text-xs text-white">Disk tools — run on the node's next check-in, not live.</p>
+
+          <div>
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <p className="text-sm text-white font-medium">Temp file cleanup</p>
+              {canAct && (
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => runDiskTool('disk_cleanup_temp', { dry_run: true, max_age_days: 1 })}
+                    disabled={queuingDiskTool === 'disk_cleanup_temp' || running(latestCleanup)}
+                    className="px-3 py-1.5 text-xs bg-gray-800 hover:bg-gray-700 border border-gray-700 text-white rounded-lg transition-colors disabled:opacity-50"
+                  >
+                    Preview
+                  </button>
+                  <button
+                    onClick={cleanupTempNow}
+                    disabled={queuingDiskTool === 'disk_cleanup_temp' || running(latestCleanup)}
+                    className="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors disabled:opacity-50"
+                  >
+                    Clean Now
+                  </button>
+                </div>
+              )}
+            </div>
+            <CleanupTempResult cmd={latestCleanup} />
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <p className="text-sm text-white font-medium">Disk health check</p>
+              {canAct && (
                 <button
-                  onClick={sendMessage}
-                  disabled={sendingMessage || !newMessage.trim()}
-                  className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors disabled:opacity-50"
+                  onClick={() => runDiskTool('disk_health_check')}
+                  disabled={queuingDiskTool === 'disk_health_check' || running(latestHealthCheck)}
+                  className="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors disabled:opacity-50"
                 >
-                  Send
+                  {queuingDiskTool === 'disk_health_check' ? 'Queuing…' : running(latestHealthCheck) ? 'Running…' : 'Check Now'}
                 </button>
+              )}
+            </div>
+            <DiskHealthResult cmd={latestHealthCheck} />
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <p className="text-sm text-white font-medium">Largest files</p>
+              {canAct && (
+                <button
+                  onClick={() => runDiskTool('disk_largest_files', { path: '', limit: 20 })}
+                  disabled={queuingDiskTool === 'disk_largest_files' || running(latestLargestFiles)}
+                  className="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors disabled:opacity-50"
+                >
+                  {queuingDiskTool === 'disk_largest_files' ? 'Queuing…' : running(latestLargestFiles) ? 'Running…' : 'Scan'}
+                </button>
+              )}
+            </div>
+            <LargestFilesResult cmd={latestLargestFiles} />
+          </div>
+        </div>
+      )}
+
+      {tab === 'unraid-array' && (
+        <div className="space-y-4">
+          <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
+            <p className="text-xs text-white mb-3">Array</p>
+            {!node.unraid_array ? (
+              <p className="text-sm text-white">No array data yet.</p>
+            ) : (
+              <div className="space-y-3">
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-white">State</span>
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-gray-800 border border-gray-700 text-white capitalize">
+                    {node.unraid_array.state?.toLowerCase() || 'unknown'}
+                  </span>
+                </div>
+                {node.unraid_array.parity_check_active ? (
+                  <div>
+                    <p className="text-xs text-white mb-1.5">
+                      Parity check in progress — {node.unraid_array.parity_check_pct?.toFixed(1) ?? '0'}%
+                      {node.unraid_array.parity_check_errors ? ` · ${node.unraid_array.parity_check_errors} error(s) so far` : ''}
+                    </p>
+                    <div className="h-2 bg-gray-800 rounded-full overflow-hidden">
+                      <div className="h-full bg-blue-500" style={{ width: `${Math.min(100, Math.max(0, node.unraid_array.parity_check_pct ?? 0))}%` }} />
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-xs text-white">
+                    {node.unraid_array.last_sync_at
+                      ? <>Last parity sync {fmtTime(node.unraid_array.last_sync_at)}
+                          {node.unraid_array.last_sync_errors ? ` — ${node.unraid_array.last_sync_errors} error(s)` : ' — no errors'}</>
+                      : 'Array has never been synced (no parity assigned, or a pool-only setup).'}
+                  </p>
+                )}
               </div>
             )}
           </div>
+
+          <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+            <p className="text-xs text-white px-5 py-3 border-b border-gray-800">Disks</p>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-800">
+                  <th className="px-5 py-3 text-left text-xs font-medium text-white">Name</th>
+                  <th className="px-5 py-3 text-left text-xs font-medium text-white">Role</th>
+                  <th className="px-5 py-3 text-left text-xs font-medium text-white">Status</th>
+                  <th className="px-5 py-3 text-left text-xs font-medium text-white">Temp</th>
+                  <th className="px-5 py-3 text-left text-xs font-medium text-white">Size</th>
+                  <th className="px-5 py-3 text-left text-xs font-medium text-white">Filesystem</th>
+                  <th className="px-5 py-3 text-left text-xs font-medium text-white">Errors</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-800/50">
+                {node.unraid_disks.map((d, i) => (
+                  <tr key={i} className="hover:bg-gray-800/30 transition-colors">
+                    <td className="px-5 py-2.5 text-white font-mono text-xs">{d.name}</td>
+                    <td className="px-5 py-2.5 text-white text-xs">{d.role || '—'}</td>
+                    <td className="px-5 py-2.5 text-xs">
+                      <span className={`px-2 py-0.5 rounded-full ${d.status === 'DISK_OK' ? 'bg-green-900/40 text-green-400 border border-green-700/40' : 'bg-gray-800 text-white border border-gray-700'}`}>
+                        {d.status === 'DISK_OK' ? 'OK' : d.status === 'DISK_NP' ? 'Not present' : d.status || '—'}
+                      </span>
+                    </td>
+                    <td className="px-5 py-2.5 text-white text-xs">{d.temp_c !== null ? `${d.temp_c.toFixed(0)}°C` : '—'}</td>
+                    <td className="px-5 py-2.5 text-white text-xs">{d.size_gb !== null ? `${d.size_gb.toFixed(0)} GB` : '—'}</td>
+                    <td className="px-5 py-2.5 text-white text-xs">{d.fs_type || '—'}</td>
+                    <td className={`px-5 py-2.5 text-xs ${d.num_errors ? 'text-red-400' : 'text-white'}`}>{d.num_errors ?? '—'}</td>
+                  </tr>
+                ))}
+                {node.unraid_disks.length === 0 && (
+                  <tr><td colSpan={7} className="px-5 py-8 text-center text-sm text-white">No disk data yet</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {tab === 'unraid-containers' && (
+        <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+          <p className="text-xs text-white px-5 py-3 border-b border-gray-800">
+            Actions run on the node's next check-in, not live.
+          </p>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-gray-800">
+                <th className="px-5 py-3 text-left text-xs font-medium text-white">Name</th>
+                <th className="px-5 py-3 text-left text-xs font-medium text-white">Image</th>
+                <th className="px-5 py-3 text-left text-xs font-medium text-white">State</th>
+                <th className="px-5 py-3 text-left text-xs font-medium text-white">Status</th>
+                <th className="px-5 py-3"></th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-800/50">
+              {node.unraid_containers.map((c, i) => {
+                const running = c.state === 'running'
+                const busy = (a: string) => queuingAction === `docker_${a}:${c.name}`
+                const latest = commands.find(cmd => cmd.command_type.startsWith('docker_') && (cmd.payload as { name?: string })?.name === c.name)
+                const pending = !!latest && isInFlight(latest)
+                return (
+                  <tr key={i} className="hover:bg-gray-800/30 transition-colors">
+                    <td className="px-5 py-2.5 text-white">{c.name}</td>
+                    <td className="px-5 py-2.5 text-white text-xs font-mono">{c.image || '—'}</td>
+                    <td className="px-5 py-2.5 text-xs">
+                      <span className={`px-2 py-0.5 rounded-full capitalize ${running ? 'bg-green-900/40 text-green-400 border border-green-700/40' : 'bg-gray-800 text-white border border-gray-700'}`}>
+                        {c.state || '—'}
+                      </span>
+                    </td>
+                    <td className="px-5 py-2.5 text-white text-xs">{c.status || '—'}</td>
+                    <td className="px-5 py-2.5">
+                      {canAct && (
+                        <div className="flex justify-end items-center gap-2">
+                          {pending && (
+                            <span className="text-xs text-blue-300 inline-flex items-center gap-1.5 whitespace-nowrap">
+                              <span className="inline-block w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
+                              {latest!.command_type.replace('docker_', '')}ing — waiting on next check-in
+                            </span>
+                          )}
+                          {!pending && !running && (
+                            <button onClick={() => runNamedAction('docker_start', c.name)} disabled={busy('start')}
+                              className="text-xs text-green-400 hover:text-green-300 transition-colors disabled:opacity-50">
+                              {busy('start') ? 'Queuing…' : 'Start'}
+                            </button>
+                          )}
+                          {!pending && running && (
+                            <>
+                              <button onClick={() => runNamedAction('docker_restart', c.name)} disabled={busy('restart')}
+                                className="text-xs text-blue-300 hover:text-blue-200 transition-colors disabled:opacity-50">
+                                {busy('restart') ? 'Queuing…' : 'Restart'}
+                              </button>
+                              <button onClick={() => runNamedAction('docker_stop', c.name)} disabled={busy('stop')}
+                                className="text-xs text-red-400 hover:text-red-300 transition-colors disabled:opacity-50">
+                                {busy('stop') ? 'Queuing…' : 'Stop'}
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                )
+              })}
+              {node.unraid_containers.length === 0 && (
+                <tr><td colSpan={5} className="px-5 py-8 text-center text-sm text-white">No containers reported (Docker may not be enabled on this node)</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {tab === 'unraid-vms' && (
+        <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+          <p className="text-xs text-white px-5 py-3 border-b border-gray-800">
+            Actions run on the node's next check-in, not live. Stop/Restart send a graceful shutdown/reboot signal to the guest OS.
+          </p>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-gray-800">
+                <th className="px-5 py-3 text-left text-xs font-medium text-white">Name</th>
+                <th className="px-5 py-3 text-left text-xs font-medium text-white">State</th>
+                <th className="px-5 py-3"></th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-800/50">
+              {node.unraid_vms.map((v, i) => {
+                const running = v.state === 'running'
+                const busy = (a: string) => queuingAction === `vm_${a}:${v.name}`
+                const latest = commands.find(cmd => cmd.command_type.startsWith('vm_') && (cmd.payload as { name?: string })?.name === v.name)
+                const pending = !!latest && isInFlight(latest)
+                return (
+                  <tr key={i} className="hover:bg-gray-800/30 transition-colors">
+                    <td className="px-5 py-2.5 text-white">{v.name}</td>
+                    <td className="px-5 py-2.5 text-xs">
+                      <span className={`px-2 py-0.5 rounded-full capitalize ${running ? 'bg-green-900/40 text-green-400 border border-green-700/40' : 'bg-gray-800 text-white border border-gray-700'}`}>
+                        {v.state || '—'}
+                      </span>
+                    </td>
+                    <td className="px-5 py-2.5">
+                      {canAct && (
+                        <div className="flex justify-end items-center gap-2">
+                          {pending && (
+                            <span className="text-xs text-blue-300 inline-flex items-center gap-1.5 whitespace-nowrap">
+                              <span className="inline-block w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
+                              {latest!.command_type.replace('vm_', '')}ing — waiting on next check-in
+                            </span>
+                          )}
+                          {!pending && !running && (
+                            <button onClick={() => runNamedAction('vm_start', v.name)} disabled={busy('start')}
+                              className="text-xs text-green-400 hover:text-green-300 transition-colors disabled:opacity-50">
+                              {busy('start') ? 'Queuing…' : 'Start'}
+                            </button>
+                          )}
+                          {!pending && running && (
+                            <>
+                              <button onClick={() => runNamedAction('vm_restart', v.name)} disabled={busy('restart')}
+                                className="text-xs text-blue-300 hover:text-blue-200 transition-colors disabled:opacity-50">
+                                {busy('restart') ? 'Queuing…' : 'Restart'}
+                              </button>
+                              <button onClick={() => runNamedAction('vm_stop', v.name)} disabled={busy('stop')}
+                                className="text-xs text-red-400 hover:text-red-300 transition-colors disabled:opacity-50">
+                                {busy('stop') ? 'Queuing…' : 'Stop'}
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                )
+              })}
+              {node.unraid_vms.length === 0 && (
+                <tr><td colSpan={3} className="px-5 py-8 text-center text-sm text-white">No VMs reported (the VM manager may not be enabled on this node)</td></tr>
+              )}
+            </tbody>
+          </table>
         </div>
       )}
 

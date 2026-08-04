@@ -15,11 +15,13 @@ package main
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/getlantern/systray"
 
 	"pktnode-agent/internal/config"
+	"pktnode-agent/internal/inventory"
 )
 
 const pollInterval = 10 * time.Second
@@ -38,6 +40,7 @@ func onReady() {
 	mServer := systray.AddMenuItem("", "")
 	mServer.Disable()
 	systray.AddSeparator()
+	mAbout := systray.AddMenuItem("About pktNode Agent", "Version and connection details")
 	mStop := systray.AddMenuItem("Stop Agent…", "Stop the agent — requires the override code from this node's page in pktNode")
 
 	refresh(mStatus, mServer)
@@ -53,29 +56,43 @@ func onReady() {
 				systray.Quit()
 				return
 			}
-			checkIncomingMessages()
+		case <-mAbout.ClickedCh:
+			showAbout()
 		case <-mStop.ClickedCh:
 			go handleStopRequest()
 		}
 	}
 }
 
-// checkIncomingMessages shows any admin messages the root agent handed to
-// us on its last check-in, one dialog at a time, and drops a typed reply
-// back into the control dir for the agent to actually send.
-func checkIncomingMessages() {
-	msgs, ok := config.ReadAndClearIncomingMessages()
-	if !ok {
-		return
-	}
-	for _, m := range msgs {
-		reply, sent := promptForReply(m.Message)
-		if sent {
-			if err := config.WriteReplyRequest(reply); err != nil {
-				showMessage("pktNode", "Failed to send your reply: "+err.Error())
-			}
+// showAbout displays a native dialog with the agent's build version and
+// current connection details, read fresh from the same world-readable
+// status file the tray's own menu items already poll — there's no direct
+// access to the privileged agent's config (server token, agent UUID),
+// only what it chooses to publish for exactly this purpose.
+func showAbout() {
+	lines := []string{"pktNode Agent " + inventory.AgentVersion}
+
+	status, err := config.LoadStatus()
+	if err != nil {
+		lines = append(lines, "", "Not enrolled with a server yet.")
+	} else {
+		lines = append(lines,
+			"",
+			"Hostname: "+status.Hostname,
+			"Server: "+status.ServerURL,
+			fmt.Sprintf("Check-in interval: %ds", status.CheckinIntervalSec),
+		)
+		switch {
+		case status.Stopped:
+			lines = append(lines, "Status: stopped")
+		case status.LastCheckinOK:
+			lines = append(lines, "Status: online — last check-in "+relativeTime(status.LastCheckinAt))
+		default:
+			lines = append(lines, "Status: check-in failing — "+status.LastError)
 		}
 	}
+
+	showMessage("About pktNode Agent", strings.Join(lines, "\n"))
 }
 
 // refresh returns true if the agent has reported an intentional stop.

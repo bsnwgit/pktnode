@@ -41,16 +41,19 @@ export default function Dashboard() {
   const navigate = useNavigate()
   const [nodes, setNodes] = useState<NodeSummary[]>([])
   const [activeAlerts, setActiveAlerts] = useState(0)
+  const [latestAgentVersion, setLatestAgentVersion] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
   const load = async () => {
     try {
-      const [n, alerts] = await Promise.all([
+      const [n, alerts, latest] = await Promise.all([
         api.getNodes(),
         api.getAlertEvents({ active: true, limit: 1000 }),
+        api.getLatestAgentVersion().catch(() => ({ version: null })),
       ])
       setNodes(n)
       setActiveAlerts(alerts.length)
+      setLatestAgentVersion(latest.version)
     } finally {
       setLoading(false)
     }
@@ -66,6 +69,9 @@ export default function Dashboard() {
     offline: nodes.filter(n => n.status === 'offline').length,
     stale: nodes.filter(n => n.status === 'stale').length,
     pending: nodes.filter(n => n.status === 'pending').length,
+    outdatedAgents: nodes.filter(n =>
+      n.status !== 'decommissioned' && latestAgentVersion && n.agent_version && n.agent_version !== latestAgentVersion
+    ).length,
   }
 
   const recentlySeen = [...nodes]
@@ -87,12 +93,13 @@ export default function Dashboard() {
         </HelpButton>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3">
         <StatCard label="Total nodes" value={counts.total} onClick={() => navigate('/nodes')} />
         <StatCard label="Online" value={counts.online} onClick={() => navigate('/nodes?status=online')} />
         <StatCard label="Offline" value={counts.offline} accent="red" onClick={() => navigate('/nodes?status=offline')} />
         <StatCard label="Stale" value={counts.stale} accent="yellow" onClick={() => navigate('/nodes?status=stale')} />
         <StatCard label="Pending" value={counts.pending} onClick={() => navigate('/nodes?status=pending')} />
+        <StatCard label="Outdated agents" value={counts.outdatedAgents} accent="yellow" onClick={() => navigate('/nodes')} />
         <StatCard label="Active alerts" value={activeAlerts} accent="red" onClick={() => navigate('/alerts')} />
       </div>
 

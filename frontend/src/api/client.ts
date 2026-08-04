@@ -167,6 +167,7 @@ export const api = {
     request<{
       alert_events_deleted: number
       metrics_history_deleted: number
+      network_history_deleted: number
       status: string
     }>('/system/cleanup', { method: 'POST' }),
   getStorageStats: () =>
@@ -265,10 +266,14 @@ export const api = {
     }),
   getOverrideCode: (id: number) =>
     request<{ code: string; expires_in_sec: number }>(`/nodes/${id}/override-code`),
+  checkinNow: (id: number) => request<{ ok: boolean }>(`/nodes/${id}/checkin-now`, { method: 'POST' }),
 
-  getNodeMessages: (id: number) => request<NodeMessage[]>(`/nodes/${id}/messages`),
-  sendNodeMessage: (id: number, message: string) =>
-    request<{ id: number }>(`/nodes/${id}/messages`, { method: 'POST', body: JSON.stringify({ message }) }),
+  getLatestAgentVersion: () => request<{ version: string | null }>('/nodes/agents/latest-version'),
+  pushAgentUpdate: (body: { node_ids?: number[]; all?: boolean; outdated_only?: boolean }) =>
+    request<{ queued: Array<{ node_id: number; command_id: number }>; count: number }>('/nodes/agents/update', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
 
   // ── Enrollment ────────────────────────────────────────────────────────────
   getEnrollmentTokens: () => request<EnrollmentToken[]>('/enrollment/tokens'),
@@ -420,7 +425,7 @@ export type LogQueryParams = {
 // ── Node types ────────────────────────────────────────────────────────────────
 
 export type NodeStatus = 'pending' | 'online' | 'offline' | 'stale' | 'decommissioned'
-export type OsType = 'darwin' | 'windows' | 'linux'
+export type OsType = 'darwin' | 'windows' | 'linux' | 'unraid' | 'Home Assistant OS'
 
 export interface NodeSummary {
   id: number
@@ -481,12 +486,59 @@ export interface NodeMetricPoint {
   recorded_at: string
 }
 
+export interface NodeNetworkPoint {
+  sent_mbps: number | null
+  recv_mbps: number | null
+  recorded_at: string
+}
+
+export interface NodeDisk {
+  mount_point: string
+  device: string | null
+  fs_type: string | null
+  total_gb: number | null
+  free_gb: number | null
+  used_pct: number | null
+}
+
 export interface NodePort {
   protocol: string
   port: number
   process_name: string | null
   pid: number | null
   captured_at: string
+}
+
+export interface UnraidArray {
+  state: string | null
+  parity_check_active: boolean
+  parity_check_pct: number | null
+  parity_check_errors: number | null
+  last_sync_at: string | null
+  last_sync_errors: number | null
+}
+
+export interface UnraidDisk {
+  name: string
+  role: string | null
+  device: string | null
+  status: string | null
+  temp_c: number | null
+  size_gb: number | null
+  fs_type: string | null
+  num_errors: number | null
+}
+
+export interface UnraidContainer {
+  name: string
+  image: string | null
+  state: string | null
+  status: string | null
+}
+
+export interface UnraidVM {
+  name: string
+  state: string | null
 }
 
 export interface NodeDetail extends NodeSummary {
@@ -500,6 +552,12 @@ export interface NodeDetail extends NodeSummary {
   ports: NodePort[]
   firewall_status: 'enabled' | 'disabled' | 'unknown'
   metrics_history: NodeMetricPoint[]
+  network_history: NodeNetworkPoint[]
+  disks: NodeDisk[]
+  unraid_array: UnraidArray | null
+  unraid_disks: UnraidDisk[]
+  unraid_containers: UnraidContainer[]
+  unraid_vms: UnraidVM[]
   has_tray: boolean
 }
 
@@ -527,15 +585,6 @@ export interface SpeedtestResult {
   error: string | null
   triggered_by: 'manual' | 'scheduled'
   created_at: string
-}
-
-export interface NodeMessage {
-  id: number
-  sender: 'admin' | 'agent'
-  message: string
-  created_at: string
-  delivered_at: string | null
-  created_by: string | null
 }
 
 export interface EnrollmentToken {
