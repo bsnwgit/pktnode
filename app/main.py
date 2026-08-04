@@ -78,6 +78,12 @@ async def lifespan(app: FastAPI):
     await backup_scheduler.start()
     log.info("Backup scheduler started")
 
+    # Start enrollment token staleness cleanup
+    from app.enrollment_cleanup import EnrollmentCleanup
+    enrollment_cleanup = EnrollmentCleanup()
+    await enrollment_cleanup.start()
+    log.info("Enrollment token cleanup started")
+
     yield
 
     # ── Shutdown ──────────────────────────────────────────────────────────────
@@ -85,6 +91,7 @@ async def lifespan(app: FastAPI):
     await engine.stop()
     await cleanup.stop()
     await backup_scheduler.stop()
+    await enrollment_cleanup.stop()
     _log_handler.stop()
     log.info("Shutdown complete")
 

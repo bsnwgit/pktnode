@@ -63,39 +63,93 @@ function NewTokenModal({ onClose, onCreated }: { onClose: () => void; onCreated:
 }
 
 function InstallSnippet({ token }: { token: string }) {
-  const [os, setOs] = useState<'darwin' | 'linux' | 'windows'>('darwin')
-  const [copied, setCopied] = useState(false)
+  const [os, setOs] = useState<'darwin' | 'linux' | 'unraid' | 'windows' | 'haos'>('darwin')
+  const [copied, setCopied] = useState<'command' | 'server' | 'token' | null>(null)
   const baseUrl = window.location.origin
-  const commands: Record<'darwin' | 'linux' | 'windows', string> = {
+  // Unraid gets the exact same install-agent.sh command as any other
+  // Linux box — it reports as Linux via uname, and every OS-specific bit
+  // (persistence, service supervision, reboot/shutdown, etc.) is handled
+  // at runtime inside the agent binary itself, not by this script. Listed
+  // separately here purely so it's not ambiguous which button to pick.
+  const commands: Record<'darwin' | 'linux' | 'unraid' | 'windows' | 'haos', string> = {
     darwin: `curl -fsSL ${baseUrl}/install-agent.sh | sudo bash -s -- --server ${baseUrl} --token ${token}`,
     linux:  `curl -fsSL ${baseUrl}/install-agent.sh | sudo bash -s -- --server ${baseUrl} --token ${token}`,
+    unraid: `curl -fsSL ${baseUrl}/install-agent.sh | bash -s -- --server ${baseUrl} --token ${token}`,
     windows: `iwr ${baseUrl}/install-agent.ps1 -UseBasicParsing | iex; Install-PktNodeAgent -Server "${baseUrl}" -Token "${token}"`,
+    // Only stages the add-on's files under /addons/local/pktnode-agent —
+    // HAOS doesn't allow installing anything directly, only the Supervisor
+    // itself is allowed to build/launch an add-on container, so the last
+    // step is still a couple of clicks in the HA UI (see below).
+    haos: `curl -fsSL ${baseUrl}/install-haos-addon.sh | bash -s -- --server ${baseUrl}`,
+  }
+
+  const copy = async (label: 'command' | 'server' | 'token', text: string) => {
+    const ok = await copyToClipboard(text)
+    if (ok) { setCopied(label); setTimeout(() => setCopied(null), 2000) }
   }
 
   return (
     <div className="space-y-2">
-      <div className="flex gap-1.5">
-        {(['darwin', 'linux', 'windows'] as const).map(o => (
+      <div className="flex gap-1.5 flex-wrap">
+        {(['darwin', 'linux', 'unraid', 'haos', 'windows'] as const).map(o => (
           <button key={o} onClick={() => setOs(o)}
             className={`text-xs px-3 py-1 rounded-lg border transition-colors ${
               os === o ? 'bg-gray-800 border-blue-500 text-white' : 'bg-gray-900 border-gray-800 text-white hover:border-gray-600'
             }`}>
-            {o === 'darwin' ? 'macOS' : o === 'linux' ? 'Linux' : 'Windows'}
+            {o === 'darwin' ? 'macOS' : o === 'linux' ? 'Linux' : o === 'unraid' ? 'Unraid' : o === 'haos' ? 'Home Assistant OS' : 'Windows'}
           </button>
         ))}
       </div>
+
+      {os === 'unraid' && (
+        <p className="text-[11px] text-white">
+          Run this from the Unraid terminal (Tools → Terminal, or SSH) as root.
+        </p>
+      )}
+      {os === 'haos' && (
+        <p className="text-[11px] text-white flex items-center gap-1">
+          Run this from Home Assistant's SSH &amp; Web Terminal add-on — stages the files, doesn't install/start it (only Supervisor can do that).
+          <HelpButton title="pktNode Agent — Home Assistant OS install">
+            <p>HAOS doesn't allow installing arbitrary software directly — the only supported path is a proper Supervisor Add-on. This command stages one as a "local add-on"; the rest is a couple of clicks in the HA UI:</p>
+            <ol className="list-decimal list-inside space-y-1">
+              <li>Run the command above from Settings → Add-ons → SSH & Web Terminal (or any shell with access to <code>/addons/local</code>).</li>
+              <li>Settings → Add-ons → Add-on Store → ⋮ → Check for updates (or reload the page) — "pktNode Agent" appears under Local add-ons.</li>
+              <li>Install it, open its Configuration tab, and paste the Server URL and Enrollment Token below.</li>
+              <li>Start the add-on and check its Log tab — it should check in within a minute.</li>
+            </ol>
+          </HelpButton>
+        </p>
+      )}
+
       <div className="flex items-start gap-2 bg-gray-950 border border-gray-800 rounded-lg px-3 py-2">
         <code className="text-xs text-white font-mono break-all flex-1">{commands[os]}</code>
-        <button
-          onClick={async () => {
-            const ok = await copyToClipboard(commands[os])
-            if (ok) { setCopied(true); setTimeout(() => setCopied(false), 2000) }
-          }}
-          className="shrink-0 text-xs text-white hover:text-white"
-        >
-          {copied ? '✓ Copied' : 'Copy'}
+        <button onClick={() => copy('command', commands[os])} className="shrink-0 text-xs text-white hover:text-white">
+          {copied === 'command' ? '✓ Copied' : 'Copy'}
         </button>
       </div>
+
+      {os === 'haos' && (
+        <div className="space-y-2 pt-1">
+          <div>
+            <p className="text-[10px] text-white mb-1">Server URL (for the add-on's Configuration tab)</p>
+            <div className="flex items-start gap-2 bg-gray-950 border border-gray-800 rounded-lg px-3 py-2">
+              <code className="text-xs text-white font-mono break-all flex-1">{baseUrl}</code>
+              <button onClick={() => copy('server', baseUrl)} className="shrink-0 text-xs text-white hover:text-white">
+                {copied === 'server' ? '✓ Copied' : 'Copy'}
+              </button>
+            </div>
+          </div>
+          <div>
+            <p className="text-[10px] text-white mb-1">Enrollment Token (for the add-on's Configuration tab)</p>
+            <div className="flex items-start gap-2 bg-gray-950 border border-gray-800 rounded-lg px-3 py-2">
+              <code className="text-xs text-white font-mono break-all flex-1">{token}</code>
+              <button onClick={() => copy('token', token)} className="shrink-0 text-xs text-white hover:text-white">
+                {copied === 'token' ? '✓ Copied' : 'Copy'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -28,7 +28,7 @@ Admin and analyst can queue commands, open Live Terminal, and bulk-manage nodes;
 
 ## Enrollment
 
-1. Enrollment page → **New Token**. Optional label, expiry, and max-use count (1 for a single machine, unlimited for a shared rollout token). The raw token is shown once; use **Get Install Command** on the token's row later if you need it again (generates a fresh token with the same label/limits).
+1. Enrollment page → **New Token**. Optional label, expiry, and max-use count (1 for a single machine, unlimited for a shared rollout token). The raw token is shown once; use **Get Install Command** on the token's row later if you need it again (generates a fresh token with the same label/limits, since a token with a finite max-use count is deleted outright the moment its last use is consumed — see below — rather than sitting around exhausted).
 2. Run the install command on the target machine:
 
 ```bash
@@ -44,9 +44,13 @@ Install-PktNodeAgent -Server "http://<server>:8764" -Token "<token>"
 
 The installer downloads the matching binary, exchanges the enrollment token for a per-node bearer token (never reused after this step), installs a native service, and starts checking in. Manual CLI equivalents exist (`pktnode-agent install/uninstall/unlock/run/version`) if you need to script it differently.
 
+A token with a finite max-use count (including the common `1`, single-machine case) is **deleted outright — not just marked revoked — the instant its last use is consumed**; it never lingers in the Enrollment list as a spent, no-longer-useful row that could be mistaken for still valid. A daily background sweep also deletes any token that's expired, or that's sat completely unused past its expiry, so an abandoned token doesn't linger either. Unlimited tokens (shared rollout links) are the deliberate exception and stick around for repeated use.
+
+Re-running the install command on a machine that's already enrolled (to upgrade an old agent, for example) reuses that node's existing identity rather than creating a duplicate row — the agent keeps its local UUID stable across a reinstall as long as its config file survives, which is what the server matches on.
+
 ### What gets collected
 
-Every check-in: CPU/memory/disk %, uptime, current logged-in user, primary IP. Every 15th check-in: full software inventory, running-process snapshot, network interfaces, listening ports, and host firewall status (replaced wholesale, not appended to history).
+Every check-in: CPU/memory/disk %, network throughput (in/out Mbps), uptime, current logged-in user, primary IP. Every 15th check-in: full software inventory, running-process snapshot, network interfaces, listening ports, host firewall status, and per-volume disk usage (all replaced wholesale, not appended to history).
 
 ### Security signals (agent 0.2.0+)
 
@@ -54,27 +58,74 @@ Every full-inventory check-in also reports listening TCP/UDP ports (with owning 
 
 This is the same data pktSecurity's `pktnode_suite` asset collector consumes when configured against this server — open ports feed its exposed-service risk scoring directly, no extra configuration needed on either side once the node reports them. Firewall status is currently informational only (visible on the node and passed through to pktSecurity) — nothing scores risk or compliance on it yet.
 
-**Agents enrolled before 0.2.0 report neither field until reinstalled** — there's no agent self-update mechanism, so pick a node's row on the Enrollment page and re-run its install command to upgrade it in place (re-enrolling reuses the same node record rather than creating a duplicate, as long as the machine's hardware serial hasn't changed).
+**Agents enrolled before 0.2.0 report neither field until updated** — see **Updating agents** under Remote actions below, or re-run the install command per Upgrading.
+
+### Disk tools (agent 0.8.0+)
+
+A node's Utils → Disk Tools subtab queues three on-demand actions the same way as any other remote action (pending → sent → completed/failed, results retained on the tab): `disk_largest_files` (scans the node's primary volume, filesystem-boundary aware so it doesn't wander into virtual mounts like `/proc`), `disk_cleanup_temp` (dry-run preview, then a real deletion pass, both age-bounded), and `disk_health_check` (SMART status via `smartctl` where available). Not queued or scheduled automatically — an admin/analyst triggers each run. Hidden entirely on Home Assistant OS nodes, which have no filesystem access to run them against.
+
+## Platform support
+
+### Unraid
+
+The agent detects an Unraid host at runtime (`/etc/unraid-version`) and installs itself the normal way, with two Unraid-specific pieces:
+
+- **FAT32 `/boot` workaround** — `/boot` is FAT32-mounted without exec permission, so the canonical binary lives there but a refreshed, executable copy is maintained at `/usr/local/pktnode-agent/` on every launch (`refreshRunCopy`); this is transparent to normal operation.
+- **Persistence across reboots** — a guarded block is added to `/boot/config/go` (Unraid's own boot-hook file) so the agent's supervisor process (`pktnode-agent supervise`) starts automatically on every boot, since Unraid has no systemd.
+
+Nodes reporting `os_type: unraid` get an extra **Unraid** tab in the UI: array/parity status and per-disk roster (parsed from Unraid's own `emhttp` state files), Docker container inventory with start/stop/restart control, and libvirt VM inventory with start/stop/restart control — all queued through the same command mechanism as other remote actions. Software inventory reads Unraid's native Slackware package database (`/var/log/packages`) rather than the deb/rpm formats used elsewhere.
+
+Uninstalling on Unraid goes through the same tamper-lockout unlock flow as any other platform.
+
+### Home Assistant OS
+
+Rather than a native OS install, the agent runs as a Home Assistant **Supervisor Add-on** (Docker-based, built from `homeassistant-addon/pktnode-agent/`) — it's the same `pktnode-agent` binary and version as every other platform, it just detects `SUPERVISOR_TOKEN` at startup and switches to collecting through the Supervisor's REST API instead of native OS calls, since a Supervisor add-on has no direct host access.
+
+**Install:**
+
+```bash
+curl -fsSL http://<server>:8764/install-haos-addon.sh | bash -s -- --server http://<server>:8764
+```
+
+Run this from the Home Assistant host's shell (SSH add-on, or direct SSH to the HAOS box). It stages the add-on files into `/addons/local/pktnode-agent/` and downloads the matching binary from `/agent-releases/`. Then in the Home Assistant UI: **Settings → Add-ons → Add-on Store → check for the "pktNode Agent" local add-on → Install**, set **Server URL** and **Enrollment Token** in its Configuration tab, and **Start**. The Enrollment page's install-command panel (OS dropdown → Home Assistant OS) has the same command plus copyable Server URL/token values.
+
+**Known platform limitations** (Supervisor API has no equivalent, not an agent bug):
+- **Processing and Security tabs report no data** — no process-list or ports/firewall API on the Supervisor.
+- **Disk Tools and Speed Test aren't available** — no filesystem access for the former; the latter isn't wired up for HAOS yet.
+- **CPU/memory are an approximation** — summed from Home Assistant Core + Supervisor + every add-on's own reported container stats (`cpu_percent`/`memory_usage`/`memory_limit` from `/core/stats`, `/supervisor/stats`, `/addons/<slug>/stats`), not a true whole-host reading.
+- Reboot/shutdown route through `/host/reboot` and `/host/shutdown`; Docker start/stop/restart commands are interpreted as add-on slugs and route through `/addons/<slug>/{start,stop,restart}`.
+
+**Add-on Store caching gotcha**: after updating add-on files on the box (a reinstall, or picking up a new version), the Store's local-add-on listing can go stale in either direction — it may not show the new files, or it may keep showing a listing whose files are already gone ("Dockerfile is missing" on install). **Settings → System → Restart → Restart Home Assistant** (not just the add-on) reliably clears this.
 
 ## Remote actions
 
-Queue `restart_service`, `kill_process`, `reboot`, `shutdown` from a node's detail page or in bulk from Nodes. Applied on the node's next check-in (bounded by the check-in interval, not instant). The API also still accepts `run_script`, and the agent still executes it, but it isn't currently exposed in the Queue Command modal — use **Live Terminal** for ad-hoc one-off commands instead.
+Queue `restart_service`, `kill_process`, `reboot`, `shutdown`, `update_agent` from a node's detail page or in bulk from Nodes; Unraid and Home Assistant OS nodes additionally accept `docker_start`/`docker_stop`/`docker_restart` (container or add-on, by name/slug) and, on Unraid, `vm_start`/`vm_stop`/`vm_restart`. Applied on the node's next check-in (bounded by the check-in interval, not instant, unless followed by a Check In Now push). The API also still accepts `run_script`, and the agent still executes it, but it isn't currently exposed in the Queue Command modal — use **Live Terminal** for ad-hoc one-off commands instead.
+
+### Updating agents (push, agent 0.2.0+)
+
+No more manual reinstalling to roll out a new agent build. The Nodes page shows **Latest agent: vX.Y.Z** (read from `agent-releases/VERSION`, written automatically by `agent/build.sh`) next to an **Update N outdated agents** button that pushes to every active node not already on that version. Select specific nodes instead and use **Update Agent** in the bulk-action bar to push to just those, regardless of their current version. A single node's own Overview tab also gets an inline **Update to vX.Y.Z** link next to its Agent version whenever it's behind, plus "Update agent" in that node's Queue Command modal for a one-off, deliberate push.
+
+Under the hood this queues the same kind of command as reboot/shutdown (`update_agent`) — the agent downloads the release binary matching its own OS/arch from `/agent-releases/`, atomically swaps it in over its own running binary, and restarts itself (systemd/launchd relaunch it automatically; the Windows service is explicitly restarted via a short-delayed helper, since SCM won't auto-restart a clean stop). All of this goes through the same tamper-lockout authorization path as an admin-initiated stop, so it doesn't require touching the machine's override code — the push itself is the authorization.
+
+**The tray helper comes along automatically if one's already installed (agent 0.3.0+)** — same download-and-swap, then a best-effort relaunch. macOS can restart it live (`launchctl kickstart -k`, since the tray's LaunchAgent has no `KeepAlive`); Linux/Windows have no equivalent live-restart mechanism (XDG autostart / per-login "Run" key), so on those the new tray binary takes effect at the user's next login instead. This never installs a tray where one wasn't already present. **Agents on 0.2.0 (which already understand `update_agent` itself) predate this specific part** — they'll still update their own binary correctly, they just won't bring the tray along; get them onto 0.3.0+ once (a push works fine for the agent binary itself) and every push after that also refreshes the tray.
+
+**Only agents already on 0.2.0+ understand `update_agent`** — an older agent just reports the command as unknown and stays on its current build. Get those onto 0.2.0+ once via the normal install-command reinstall (Enrollment page → node row → **Get Install Command**); every push after that works.
 
 ## Speed Test
 
-A node's **Speedtest** tab runs a real download/upload/latency test over M-Lab's NDT7 protocol — no API key, no bundled external binary, a nearby measurement server is auto-discovered each run. **Run Speedtest Now** queues it through the same command mechanism as Remote Actions above (pending → sent → completed/failed). For an unattended schedule, set **Settings → General → Speedtest schedule** (hours, `0` = off) — unlike the check-in interval, this setting takes effect on already-running agents on their very next check-in, no re-enroll needed. Only one test runs per node at a time; a collision between a scheduled run and a manual one is skipped, not queued. Every run (including failures) lands in the Speedtest tab's history table with download/upload Mbps, latency/jitter, and which server was used. **Agents enrolled before this feature shipped need reinstalling to pick it up**, same limitation as Security signals above.
+A node's Utils → **Speed Test** subtab runs a real download/upload/latency test over M-Lab's NDT7 protocol — no API key, no bundled external binary, a nearby measurement server is auto-discovered each run. **Run Speedtest Now** queues it through the same command mechanism as Remote Actions above (pending → sent → completed/failed). For an unattended schedule, set **Settings → General → Speedtest schedule** (hours, `0` = off) — unlike the check-in interval, this setting takes effect on already-running agents on their very next check-in, no re-enroll needed. Only one test runs per node at a time; a collision between a scheduled run and a manual one is skipped, not queued. Every run (including failures) lands in the Speed Test subtab's history table with download/upload Mbps, latency/jitter, and which server was used. **Agents enrolled before this feature shipped need reinstalling to pick it up**, same limitation as Security signals above. Not available on Home Assistant OS nodes yet — see Platform support above.
 
 ## Live Terminal
 
 A real interactive shell, opened via a persistent outbound WebSocket the agent keeps open (separate from its periodic HTTP check-in) — the server relays between that and an admin's browser session. The node never accepts an inbound connection of any kind, so no firewall changes are needed on the managed machine. A second admin opening a terminal on the same node preempts (doesn't queue behind) the existing session. If the node has no live control-channel connection (agent offline, or an older build predating this feature), the button reports that plainly.
 
-## Messaging (tray chat)
+## Check In Now (agent 0.3.0+)
 
-Two-way chat via the Messages tab, delivered through the tray helper on the node. Bounded by the check-in interval in both directions — no live push. **A node with no tray helper running can't be messaged at all**, enforced server-side, not just hidden in the UI (`has_tray` is reported on every check-in; always `false` on headless Linux, and on Linux generally until a tray build ships for it).
+The same always-open control channel that powers Live Terminal also carries a lightweight "check in right now" push — **Check In Now** on a node's detail page, next to Live Terminal. It skips the rest of that node's current check-in interval instead of waiting it out, which is what makes a just-queued command (including `update_agent`) or a fresh inventory snapshot show up immediately instead of after a wait bounded by the check-in interval. Same reachability requirement as Live Terminal — a node with no live control-channel connection reports that plainly rather than silently doing nothing. **Agents older than 0.3.0 keep their control channel open (Live Terminal still works) but silently ignore this specific push** — harmless, it just means the button has no visible effect until that node is updated once.
 
 ## Tray helper (status icon)
 
-A small per-user process (separate from the root/SYSTEM agent service, since root/SYSTEM can't draw UI on any of the three OSes) shows online/offline status and last check-in in the system tray, reading a world-readable `status.json` the agent writes after each check-in — no network access or credentials of its own. Installed automatically when a tray build exists for the target OS/arch (not every target has one — Linux needs a native GTK3/libappindicator3-dev build, and Windows/arm64 has no ready cgo cross-toolchain today). The tray's only real interactive item is **Stop Agent…**, gated by the override code below — there's no way to quietly kill just the icon.
+A small per-user process (separate from the root/SYSTEM agent service, since root/SYSTEM can't draw UI on any of the three OSes) shows online/offline status and last check-in in the system tray, reading a world-readable `status.json` the agent writes after each check-in — no network access or credentials of its own. Installed automatically when a tray build exists for the target OS/arch (not every target has one — Linux needs a native GTK3/libappindicator3-dev build, and Windows/arm64 has no ready cgo cross-toolchain today). Its **About pktNode Agent** item shows the agent's version, server URL, check-in interval, and current status. Its only other interactive item is **Stop Agent…**, gated by the override code below — there's no way to quietly kill just the icon.
 
 ## Tamper lockout (override code)
 
@@ -99,7 +150,7 @@ If a device is in two groups with conflicting settings for the *same field* of t
 
 ## Alerting
 
-Four built-in rule types, evaluated every 60 seconds: `node_offline`, `disk_low`, `cpu_high`, `mem_high`. Manage rules (thresholds, severity, channels, cooldown) on Alerts → Rules — you can have more than one rule of the same type at different severities/thresholds. Notification channels (Slack/Email/PagerDuty/Webhook/TraceCat) are configured under Settings → Notifications.
+Four built-in rule types, evaluated every 60 seconds: `node_offline`, `disk_low`, `cpu_high`, `mem_high`. Manage rules (thresholds, severity, channels, cooldown) on Alerts → Rules — you can have more than one rule of the same type at different severities/thresholds. Notification channels (Slack/Email/PagerDuty/Webhook/TraceCat) are configured under Settings → Notifications. Deleting a node (Overview → **Delete Permanently**) auto-resolves any of its still-open alert events first, so it can't leave a stuck "offline" alert behind with nothing left to auto-resolve it.
 
 ## Backup & Restore
 
@@ -117,9 +168,10 @@ Configure schedule and rotation at Settings → Data → Backups. Each snapshot 
 | Service won't start | `journalctl -u pktnode -n 50`; check `config.yaml` and secret key |
 | A node never comes online after install | Confirm the install command reached the machine and that it can reach the server URL over the network; check the enrollment token hasn't expired or hit its use limit |
 | Live Terminal reports no connection | Agent may be offline, or predates this feature — rebuild/update the agent |
-| Messages tab shows a warning and no send box | That node has no tray helper running (or is headless Linux, or Linux without a tray build) |
 | A restored `config.yaml` didn't take effect | Restart the service — restoring never does this automatically |
+| HAOS add-on install fails with "Dockerfile is missing" | Add-on Store listing is stale — **Settings → System → Restart → Restart Home Assistant**, then reinstall |
+| Unraid agent won't survive a reboot | Check `/boot/config/go` has the pktNode block — reinstalling repairs it |
 
 ## Upgrading
 
-Pull the latest server code, rebuild the frontend if you build manually, then restart the service. Rebuild and redistribute agent binaries separately (`agent/build.sh`) if the agent itself changed — existing agents keep running their current version until manually updated/reinstalled.
+Pull the latest server code, rebuild the frontend if you build manually, then restart the service. If the agent itself changed, rebuild release binaries with `agent/build.sh` (this also refreshes `agent-releases/VERSION`) — agents on 0.2.0+ can then be updated with a push from the Nodes page instead of a manual reinstall; see **Updating agents** above. Agents older than 0.2.0 still need one manual reinstall to get onto a build that understands the push mechanism at all.

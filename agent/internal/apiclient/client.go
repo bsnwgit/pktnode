@@ -60,17 +60,10 @@ type CommandOut struct {
 	Payload     json.RawMessage `json:"payload"`
 }
 
-type MessageOut struct {
-	ID        int    `json:"id"`
-	Message   string `json:"message"`
-	CreatedAt string `json:"created_at"`
-}
-
 type CheckinResponse struct {
 	CheckinIntervalSec   int          `json:"checkin_interval_sec"`
 	SpeedtestIntervalSec int          `json:"speedtest_interval_sec"`
 	Commands             []CommandOut `json:"commands"`
-	Messages             []MessageOut `json:"messages"`
 }
 
 func (c *Client) Checkin(payload interface{}) (*CheckinResponse, error) {
@@ -90,10 +83,6 @@ type CommandResult struct {
 func (c *Client) ReportCommandResult(commandID int, result CommandResult) error {
 	path := fmt.Sprintf("/api/agent/commands/%d/result", commandID)
 	return c.do("POST", path, result, c.Token, nil)
-}
-
-func (c *Client) ReplyMessage(message string) error {
-	return c.do("POST", "/api/agent/messages/reply", map[string]string{"message": message}, c.Token, nil)
 }
 
 // SpeedtestResult mirrors speedtest.Result — kept as its own type here

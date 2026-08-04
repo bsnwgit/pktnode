@@ -8,9 +8,9 @@ RMM (remote monitoring & management) for the pkt suite — tracks and manages
 user-level assets (Mac/Windows/Linux endpoints) via a lightweight Go agent
 that enrolls with the server, checks in on an interval reporting hardware/
 software inventory and live resource usage, executes queued remote actions
-(service restarts, reboot/shutdown), opens an instant interactive shell on
-a node (Live Terminal), and relays a simple 2-way chat between an admin and
-whoever's logged into the machine (via a tray/menu-bar helper).
+(service restarts, reboot/shutdown, agent self-update), and opens an
+instant interactive shell on a node (Live Terminal) or forces an immediate
+check-in, both over the same always-open control channel.
 
 **Default port:** `8764` (HTTP)
 
@@ -24,6 +24,8 @@ whoever's logged into the machine (via a tray/menu-bar helper).
 - [Using pktNode](#using-pktnode)
 - [Agent](#agent)
   - [Security Signals](#security-signals)
+  - [Disk Tools](#disk-tools-agent-080)
+  - [Platform Support: Unraid & Home Assistant OS](#platform-support-unraid--home-assistant-os)
   - [Speed Test](#speed-test)
   - [Updating Agents](#updating-agents)
 - [Frontend Build & Deploy](#frontend-build--deploy)
@@ -60,9 +62,7 @@ appends a metrics-history sample, and (on a full-inventory check-in, every
 `commands` rows queued for that node with `status='pending'` are handed
 back in the response and flipped to `status='sent'`; the agent executes
 each one and reports the result via
-`POST /api/agent/commands/{id}/result`. Pending admin→agent chat messages
-are handed back and flipped to delivered the same way (see
-[Messaging](#messaging-tray-chat)).
+`POST /api/agent/commands/{id}/result`.
 
 Separately from that polling loop, the agent also keeps one persistent
 outbound WebSocket open to `/api/agent/terminal/ws` for its whole run — a
@@ -116,47 +116,51 @@ itself.
   reboot or shut down** several nodes at once — each queues a `reboot`/
   `shutdown` command per selected node, applied on that node's next
   check-in, same as the single-node action — **bulk-assign them to a
-  group** via the same selection (see [Groups](#groups)), or **push an
-  agent update** to the selection. The page header also shows the current
-  **Latest agent** version (from `agent-releases/VERSION`) with an
-  **Update N outdated agents** button that pushes to every active node
-  not already on it, no selection needed — see
+  group** via the same selection (see [Groups](#groups)), **push an
+  agent update** to the selection, or **Check In Now** them all (agent
+  0.3.0+) — pushes an immediate check-in over each selected node's live
+  control channel instead of waiting for its next scheduled one, same
+  mechanism as the single-node action (see
+  [Check In Now](#check-in-now-agent-030)). The page header also shows
+  the current **Latest agent** version (from `agent-releases/VERSION`)
+  with an **Update N outdated agents** button that pushes to every
+  active node not already on it, no selection needed — see
   [Updating agents](#updating-agents).
-- **Node detail** (`/nodes/{id}`) — tabs for Overview (hardware, IP, current
-  user, network interfaces, **Groups** membership, and a **Host down
-  alerts** override — see [Groups](#groups) and
-  [Per-device and group overrides](#per-device-and-group-overrides)),
-  Software (installed-package inventory),
-  Processes (running-process snapshot, with a per-row **Kill** action),
-  Security (listening TCP/UDP ports and a best-effort host firewall
-  enabled/disabled state — see [Security signals](#security-signals)),
-  Metrics (CPU/mem/disk history chart + table), Commands (remote-action
-  history), and Messages (tray chat, see below). Admin/analyst get two
-  action buttons at the top:
-  - **Live Terminal** — an instant, interactive shell on the node (see
-    [Live Terminal](#live-terminal) below) — nothing queued, nothing logged.
-  - **Queue Command** — opens a console-style modal to fire a fixed remote
-    action (**Restart service**, **Kill process**, **Reboot node**,
-    **Shutdown node**, **Update agent**) and watch it move from `pending` →
-    `sent` → `completed`/`failed` live, without leaving the modal. Every
-    queued command is also logged in the Commands tab, and clicking a past
-    row reopens the modal seeded with that command's transcript. See
-    [Remote actions](#remote-actions) for exactly what each type does and
-    its current caveats.
-  - Overview also shows **Agent version**, with an inline
-    **Update to vX.Y.Z** link next to it whenever this node is behind the
-    latest available build — a one-click shortcut to the same push, no
-    modal needed.
-  - Admins additionally get **Override Code** (the live TOTP code for
-    locally stopping/uninstalling the agent — see
-    [Tamper lockout](#tamper-lockout-override-code)) and
-    **Decommission & Revoke** / **Delete Permanently**.
-- **Messaging a node** — the Messages tab is a simple chat thread with
-  whoever is logged into that node, delivered through the tray helper (see
-  [Messaging](#messaging-tray-chat) below). **Nodes with no tray helper
-  running can't be messaged at all** — the tab shows a warning banner and
-  hides the send box, and the server rejects the send outright, not just
-  the UI.
+- **Node detail** (`/nodes/{id}`) — four main tabs, most with their own
+  subtabs:
+  - **Overview** — hardware summary, IP, current user, network interfaces,
+    group membership, and an **Actions** card (admin/analyst) with
+    **Check In Now** plus, admin-only, **Override Code**, **Decommission &
+    Revoke**, and **Delete Permanently**. Also shows **Agent version**,
+    with an inline **Update to vX.Y.Z** link whenever this node is behind
+    the latest available build.
+  - **System** → Software (installed-package inventory), Processing
+    (running-process snapshot, with a per-row **Kill** action), Security
+    (listening TCP/UDP ports and a best-effort host firewall
+    enabled/disabled state — see [Security signals](#security-signals)),
+    Settings (this node's **Groups** membership and its **Host down
+    alerts** override — see [Groups](#groups) and
+    [Per-device and group overrides](#per-device-and-group-overrides)).
+  - **Metrics** → System (CPU/mem/disk history chart + table) and Network
+    (inbound/outbound throughput history, agent 0.8.0+).
+  - **Utils** → Commands (remote-action history, with its own **Queue
+    Command** button to fire a fixed remote action — **Restart service**,
+    **Kill process**, **Reboot node**, **Shutdown node**, **Update
+    agent**, plus, on Unraid/Home Assistant OS nodes, container/VM
+    start/stop/restart — and watch it move from `pending` → `sent` →
+    `completed`/`failed` live without leaving the modal; see
+    [Remote actions](#remote-actions) for what each type does), Storage
+    (per-volume disk usage), Disk Tools (largest-files scan, temp
+    cleanup, disk health check — agent 0.8.0+, hidden on Home Assistant OS
+    nodes), Speed Test (see [Speed Test](#speed-test) below).
+  - Unraid nodes additionally get an **Unraid** main tab: array/parity
+    status + per-disk roster, Docker container inventory, and VM
+    inventory, each with start/stop/restart control — see
+    [Platform support](#platform-support-unraid--home-assistant-os).
+  - Admins/analysts also get a **Live Terminal** button in the page header
+    for an instant, interactive shell on the node (see
+    [Live Terminal](#live-terminal) below) — nothing queued, nothing
+    logged.
 - **Enrollment** (`/enrollment`, admin only) — its own top-level nav item,
   not under Settings — issue and manage enrollment tokens (see
   [Enrolling a node](#enrolling-a-node)).
@@ -181,11 +185,15 @@ installer scripts to download.
 
 1. In the UI: **Enrollment** (its own top-level nav item, admin only) →
    **New Token**. Optionally set a label, an expiry, and a max-use count (1
-   for a single-machine install, unlimited for a shared rollout token).
-   Tokens are split into **Active**/**Revoked** tabs; the raw token string
-   is only ever shown once, but **Get Install Command** on a token's row
-   generates a fresh one for the same token (same label/limits, use count
-   reset) if you navigated away before copying it.
+   for a single-machine install, unlimited for a shared rollout token). The
+   raw token string is only ever shown once, but **Get Install Command** on
+   a token's row generates a fresh one for the same token (same
+   label/limits) if you navigated away before copying it — a finite-use
+   token is **deleted outright, not just revoked, the instant its last use
+   is consumed** (`app/enrollment_cleanup.py` also runs a daily sweep that
+   deletes anything expired or left completely unused past its expiry), so
+   there's never a spent row sitting in the list to regenerate a command
+   for.
 2. Copy the generated install command for the target OS and run it on the
    machine:
 
@@ -216,12 +224,33 @@ pktnode-agent version
 
 ### What gets collected
 
-Every check-in: CPU/memory/disk %, uptime, current logged-in user, primary
-IP. Every 15th check-in (configurable via the check-in cadence, not
-independently): full software inventory, running-process snapshot, network
-interfaces, listening ports, and host firewall status — replaced wholesale
-each time, not appended to history (see
+Every check-in: CPU/memory/disk %, network throughput (in/out Mbps,
+appended to a history table — see the Metrics → Network subtab), uptime,
+current logged-in user, primary IP. Every 15th check-in (configurable via
+the check-in cadence, not independently): full software inventory,
+running-process snapshot, network interfaces, listening ports, host
+firewall status, and per-volume disk usage — all replaced wholesale each
+time, not appended to history (see
 [Security signals](#security-signals)).
+
+### Disk tools (agent 0.8.0+)
+
+A node's Utils → Disk Tools subtab queues three on-demand actions the same
+way as any other remote action (pending → sent → completed/failed, results
+retained on the tab, nothing scheduled automatically):
+
+- `disk_largest_files` — scans the node's primary volume for its largest
+  files. Filesystem-boundary aware (`deviceOf()` in
+  `agent/internal/commands/commands_unix.go`, comparing each entry's device
+  ID against the scan root's) so it doesn't wander into virtual mounts like
+  `/proc`, whose files can report bogus sizes (`/proc/kcore` reporting
+  itself as 128TB was the bug that motivated this check).
+- `disk_cleanup_temp` — dry-run preview first, then a real, age-bounded
+  deletion pass over temp-directory files.
+- `disk_health_check` — SMART status via `smartctl` where available.
+
+Not available on Home Assistant OS nodes — see
+[Platform support](#platform-support-unraid--home-assistant-os) below.
 
 ### Security signals
 
@@ -250,17 +279,82 @@ before 0.2.0 won't report either field until updated** — see
 
 From a node's detail page (**Queue Command**) or in bulk from the Nodes
 list (multi-select → Reboot/Shut Down), admins/analysts can queue:
-`restart_service`, `kill_process`, `reboot`, `shutdown`, `update_agent`.
-Commands are picked up on the node's next check-in (so latency is bounded
-by the check-in interval, not instant — up to a minute is normal) and
-results are visible in the node's Commands tab, or live in the Queue
-Command modal while a command you just fired is still in flight.
+`restart_service`, `kill_process`, `reboot`, `shutdown`, `update_agent`, and
+— on Unraid and Home Assistant OS nodes — `docker_start`/`docker_stop`/
+`docker_restart` (container or add-on, addressed by name/slug) plus, on
+Unraid only, `vm_start`/`vm_stop`/`vm_restart`. Commands are picked up on
+the node's next check-in (so latency is bounded by the check-in interval,
+not instant — up to a minute is normal, or immediately if followed by
+[Check In Now](#check-in-now-agent-030)) and results are visible in the
+node's Commands tab, or live in the Queue Command modal while a command you
+just fired is still in flight.
 
 The server API also still accepts a `run_script` command type (shell on
 macOS/Linux, PowerShell on Windows) and the agent still executes it — but
 it is **not currently exposed as an option in the Queue Command modal**.
 For one-off/ad-hoc commands today, use [Live Terminal](#live-terminal)
 instead, which is interactive and instant rather than queued.
+
+### Platform support: Unraid & Home Assistant OS
+
+Beyond macOS/Linux/Windows, the same `pktnode-agent` binary — same version,
+same `AgentVersion` constant — also runs on two more platforms, detected at
+runtime rather than requiring a separate build:
+
+**Unraid** (`inventory.IsUnraid()`, checking for `/etc/unraid-version`)
+installs like a normal Linux host with two platform-specific pieces:
+
+- `/boot` is FAT32-mounted without exec permission, so the canonical binary
+  lives there but `refreshRunCopy()` maintains a refreshed, executable copy
+  at `/usr/local/pktnode-agent/` on every launch.
+- Unraid has no systemd, so persistence across reboots comes from a guarded
+  block added to `/boot/config/go` (Unraid's own boot-hook file) that
+  starts `pktnode-agent supervise` on every boot.
+
+Nodes reporting `os_type: unraid` get an extra **Unraid** tab: array/parity
+status and per-disk roster (parsed from Unraid's `emhttp` state files at
+`/var/local/emhttp/{var,disks}.ini`), Docker container inventory with
+start/stop/restart, and libvirt VM inventory with start/stop/restart — all
+queued through the normal command mechanism. Software inventory reads
+Unraid's native Slackware package database (`/var/log/packages`, filename-
+encoded `name-version-arch-build` entries) instead of the deb/rpm formats
+used elsewhere. Uninstall goes through the same tamper-lockout unlock flow
+as any other platform.
+
+**Home Assistant OS** (`inventory.IsHAOS()`, checking for a `SUPERVISOR_TOKEN`
+env var) can't be installed onto natively — instead the agent runs as a
+Home Assistant **Supervisor Add-on** (Docker-based, built from
+`homeassistant-addon/pktnode-agent/`), installed via:
+
+```bash
+curl -fsSL http://<server>:8764/install-haos-addon.sh | bash -s -- --server http://<server>:8764
+```
+
+run from the HA host's own shell. This stages the add-on into
+`/addons/local/pktnode-agent/` and downloads the matching binary from
+`/agent-releases/`; from there it's a normal local add-on install
+(**Settings → Add-ons → Add-on Store**) with **Server URL**/**Enrollment
+Token** set in its Configuration tab. At runtime, `SUPERVISOR_TOKEN` being
+present routes the agent into `agent/internal/haosloop` instead of the
+usual `svcrun`, which collects through the Supervisor's REST API
+(`http://supervisor/*`) rather than native OS calls, since a Supervisor
+add-on has no direct host access.
+
+Known, permanent platform limitations (Supervisor API has no equivalent —
+not agent bugs): **Processing and Security tabs report no data** (no
+process-list or ports/firewall API); **Disk Tools and Speed Test aren't
+available** (no filesystem access for the former; the latter isn't wired
+up for HAOS yet); **CPU/memory are an approximation**, summed from Home
+Assistant Core + Supervisor + every add-on's own reported container stats
+rather than a true whole-host reading. Reboot/shutdown route through
+`/host/reboot`/`/host/shutdown`; Docker commands are interpreted as add-on
+slugs and route through `/addons/<slug>/{start,stop,restart}`.
+
+The HA Add-on Store's local-listing cache can go stale in either direction
+after updating add-on files on the box — it may not pick up new files, or
+may keep listing files that are already gone (`Dockerfile is missing` on
+install). **Settings → System → Restart → Restart Home Assistant** (not
+just the add-on) reliably clears this.
 
 ### Updating agents
 
@@ -283,6 +377,18 @@ On execution, the agent:
    relaunch it. Windows SCM won't auto-restart a cleanly-stopped service,
    so there it schedules a short-delayed detached `sc start` helper first,
    then requests its own stop the same way.
+4. If the [tray helper](#status-icon-tray-helper) is already installed on
+   this machine, best-effort updates that too (agent 0.3.0+) —
+   downloads and swaps its binary the same way, then relaunches it
+   immediately on macOS (`launchctl kickstart -k`, since its LaunchAgent
+   has no `KeepAlive` to relaunch it on its own). Linux/Windows have no
+   live restart mechanism for it (XDG autostart / per-login "Run" key),
+   so there the new tray binary just takes effect at the user's next
+   login. A tray isn't installed fresh by this — only refreshed if one's
+   already there. **Agents on 0.2.0** (which already understand
+   `update_agent` itself, just not this part) **update their own binary
+   fine but skip the tray** — one push gets them to 0.3.0+, after which
+   the tray comes along too.
 
 The command reports `completed` (with the binary swap already done) before
 the restart actually lands, so the queued command's result doesn't race the
@@ -345,24 +451,25 @@ no live control-channel connection (agent offline, or an older agent
 build that predates this feature), the button reports that plainly
 instead of hanging.
 
-### Messaging (tray chat)
+### Check In Now (agent 0.3.0+)
 
-A simple 2-way chat between an admin and whoever is logged into the node,
-from the node detail page's **Messages** tab. Admin → agent messages are
-handed to the agent on its next check-in and shown as a native OS dialog
-by the tray helper (see below); a reply typed into that dialog is relayed
-back the same way check-in results are, and shows up in the Messages tab
-on the admin's next poll (it refreshes every 10s while that tab is open).
-There is no live push in either direction — delivery in both directions
-is bounded by the check-in interval.
-
-**A node with no tray helper running can't be messaged, period** — the
-agent reports `has_tray` on every check-in (always `false` on headless
-Linux, and on Linux in general until a tray build ships — see
-[Status icon](#status-icon-tray-helper)). The Messages tab shows a
-warning banner and hides the send box for such a node, and
-`POST /api/nodes/{id}/messages` rejects the send server-side too, so this
-isn't just a frontend nicety.
+Piggybacks on that same always-open control channel rather than opening
+anything new: `POST /api/nodes/{id}/checkin-now` looks up the node's live
+`AgentLink` in `app/terminal_hub.py`'s registry and sends it a
+`{"type": "checkin_now"}` frame. The agent's control-channel reader
+(`agent/internal/terminal/terminal.go`) recognizes that type specially —
+instead of dispatching it to the PTY session manager, it signals
+`agentloop.Run`'s main check-in loop (over a small buffered channel) to
+skip the rest of the current interval and check in immediately. This is
+what makes a command you just queued (including `update_agent`) or a
+fresh inventory snapshot show up right away instead of waiting out
+whatever the check-in interval happens to be. Same reachability
+requirement as Live Terminal — no live control-channel connection means
+the button reports that plainly rather than silently doing nothing.
+**Agents older than 0.3.0 keep the control channel itself open (Live
+Terminal still works on them) but their message loop has no case for
+`checkin_now` yet, so it's silently ignored** — harmless, the button
+just has no visible effect until that node is updated once.
 
 ### Status icon (tray helper)
 
@@ -381,12 +488,11 @@ readily available cgo cross-toolchain).
 
 The menu itself is deliberately minimal: a disabled status line
 (online/checking-in-failing + relative last-check-in time), a disabled
-line showing the configured server URL, and **Stop Agent…**. There is no
-"Open pktNode" item — regular users on a node don't get a shortcut to the
-admin web UI from here. When an admin sends this node a message (see
-[Messaging](#messaging-tray-chat)), the tray shows it as a native OS
-dialog (`osascript`/PowerShell `InputBox`/`zenity`) with a free-text reply
-field, one message at a time.
+line showing the configured server URL, **About pktNode Agent** (a native
+dialog with the agent's version, server URL, check-in interval, and
+current status — read from the same `status.json`), and **Stop Agent…**.
+There is no "Open pktNode" item — regular users on a node don't get a
+shortcut to the admin web UI from here.
 
 **The tray and the agent are tied together, not independent.** There is
 no plain "quit the icon" option — the tray's **Stop Agent…** menu item
@@ -454,7 +560,7 @@ tables and is managed from the Settings page — not this file.
 
 **Agent check-in interval** (Settings → General, default 60s, 15–3600s
 range) controls how often every node calls home — it's also the floor on
-how fast a queued remote action or a chat message can reach a node.
+how fast a queued remote action can reach a node.
 **Caveat as currently implemented**: this only takes effect for agents
 enrolling *after* the change. An agent already running keeps the interval
 it received at its own enroll time — the check-in response does carry the
@@ -678,11 +784,7 @@ go run . install --server http://localhost:8764 --token <enrollment-token>
   currently sitting in `agent-releases/` on the server.
 - No tray/status-icon build for Linux (needs GTK3/libappindicator3-dev,
   build natively on Linux) or Windows/arm64 (no readily available cgo
-  cross-toolchain for it) — which also means no tray chat and no
-  messaging support on those targets (see [Messaging](#messaging-tray-chat)).
-- Messaging is a single OS dialog at a time (native `osascript`/`InputBox`/
-  `zenity`, not a persistent chat window) — fine for short exchanges, not
-  a real chat UI.
+  cross-toolchain for it) — those targets get no menu-bar/tray icon at all.
 - Changing the agent check-in interval in Settings doesn't propagate to
   already-running agents — see the caveat in
   [Configuration Reference](#configuration-reference); only newly-enrolled
@@ -695,3 +797,9 @@ go run . install --server http://localhost:8764 --token <enrollment-token>
   measurement — this is deliberate (works the same regardless of the
   node's OS) but means it reflects the server's view of the path, not a
   separately-measured client-side RTT.
+- Home Assistant OS nodes only report a single primary IP, not the full
+  network-interfaces list the Overview card shows for other platforms —
+  the Supervisor's `/network/info` response isn't mapped to per-interface
+  entries yet. Speed Test also isn't wired into `agent/internal/haosloop`
+  at all yet, even though `internal/speedtest.Run` itself is
+  platform-agnostic and could be reused directly.

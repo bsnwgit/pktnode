@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"runtime"
+	"strings"
 	"time"
 
 	"pktnode-agent/internal/apiclient"
@@ -43,14 +44,26 @@ func newUUID() string {
 // token and saves the result to the local config file.
 func Enroll(serverURL, enrollmentToken string) error {
 	snap := inventory.Collect(false)
+
+	// Reuse this machine's existing agent UUID across a reinstall if one's
+	// already on disk — the server matches nodes primarily by this UUID
+	// (see the /enroll handler in app/api/agent.py), so keeping it stable
+	// is what lets "rerun the install command to upgrade an existing agent"
+	// land back on the same node record instead of creating a duplicate.
+	// Only a genuine wipe (no config left at all, or an unreadable one)
+	// falls through to a fresh UUID — that's the case the server's
+	// hardware-serial fallback match exists for instead.
 	agentUUID := newUUID()
+	if existing, err := config.Load(); err == nil && existing.AgentUUID != "" {
+		agentUUID = existing.AgentUUID
+	}
 
 	client := apiclient.New(serverURL, "")
 	resp, err := client.Enroll(apiclient.EnrollRequest{
 		EnrollmentToken: enrollmentToken,
 		AgentUUID:       agentUUID,
 		Hostname:        snap.Hostname,
-		OSType:          inventory.GOOS(),
+		OSType:          inventory.OSType(),
 		OSVersion:       snap.OSVersion,
 		Arch:            archName(),
 		AgentVersion:    inventory.AgentVersion,
@@ -88,8 +101,17 @@ func Run(stopCh <-chan struct{}) error {
 	go pollStopRequests(cfg)
 
 	client := apiclient.New(cfg.ServerURL, cfg.AgentToken)
-	go pollReplyRequests(client)
-	go terminal.Run(cfg.ServerURL, cfg.AgentToken, stopCh)
+
+	// Buffered so a checkin_now that arrives while we're mid check-in (or
+	// two in quick succession) isn't lost or blocked on — the loop below
+	// only ever needs to know "at least one arrived", not how many.
+	checkinNowCh := make(chan struct{}, 1)
+	go terminal.Run(cfg.ServerURL, cfg.AgentToken, stopCh, func() {
+		select {
+		case checkinNowCh <- struct{}{}:
+		default:
+		}
+	})
 
 	interval := time.Duration(cfg.CheckinIntervalSec) * time.Second
 	if interval <= 0 {
@@ -106,6 +128,10 @@ func Run(stopCh <-chan struct{}) error {
 		case <-stopCh:
 			markStopped(cfg)
 			return nil
+		case <-checkinNowCh:
+			// Admin asked for an immediate check-in over the live control
+			// channel — skip the rest of this interval and loop right back
+			// around to checkinOnce instead of waiting it out.
 		case <-time.After(interval):
 		}
 	}
@@ -145,24 +171,6 @@ func pollStopRequests(cfg *config.Config) {
 	}
 }
 
-// pollReplyRequests watches for a reply the tray dropped into the control
-// dir after showing the user an incoming message, and relays it to the
-// server. The tray itself has no network access or credentials — this is
-// the one process that does, same split as pollStopRequests.
-func pollReplyRequests(client *apiclient.Client) {
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-	for range ticker.C {
-		req, ok := config.ReadAndClearReplyRequest()
-		if !ok {
-			continue
-		}
-		if err := client.ReplyMessage(req.Message); err != nil {
-			log.Printf("failed to send reply message: %v", err)
-		}
-	}
-}
-
 func markStopped(cfg *config.Config) {
 	status, err := config.LoadStatus()
 	if err != nil {
@@ -198,28 +206,39 @@ func checkinOnce(client *apiclient.Client, cfg *config.Config, fullInventory boo
 		log.Printf("failed to write status file: %v", saveErr)
 	}
 
+	inventoryChanged := false
 	for _, cmd := range resp.Commands {
 		log.Printf("executing queued command #%d (%s)", cmd.ID, cmd.CommandType)
-		result := commands.Execute(cmd.CommandType, cmd.Payload)
+		result := commands.Execute(cmd.CommandType, cmd.Payload, client.ServerURL)
 		if err := client.ReportCommandResult(cmd.ID, apiclient.CommandResult{
 			Status: result.Status, ExitCode: result.ExitCode, Result: result.Output,
 		}); err != nil {
 			log.Printf("failed to report result for command #%d: %v", cmd.ID, err)
 		}
+		if strings.HasPrefix(cmd.CommandType, "docker_") || strings.HasPrefix(cmd.CommandType, "vm_") {
+			inventoryChanged = true
+		}
+	}
+
+	// The snapshot sent above was collected *before* these commands ran,
+	// so a container/VM this cycle just started or stopped would
+	// otherwise still show its old state until the next full-inventory
+	// cycle (every 15th check-in) — up to 15 check-ins of a UI that looks
+	// like the click didn't do anything, even though it already worked.
+	// One extra, immediate full-inventory check-in fixes that without
+	// changing the normal cadence. Best-effort: any commands this
+	// follow-up happens to receive are simply left for the next regular
+	// cycle rather than executed recursively here.
+	if inventoryChanged {
+		refreshSnap := inventory.Collect(true)
+		refreshSnap.HasTray = snap.HasTray
+		if _, err := client.Checkin(refreshSnap); err != nil {
+			log.Printf("post-action inventory refresh check-in failed: %v", err)
+		}
 	}
 
 	cfg.SpeedtestIntervalSec = resp.SpeedtestIntervalSec
 	maybeRunScheduledSpeedtest(client, cfg)
-
-	if len(resp.Messages) > 0 {
-		msgs := make([]config.IncomingMessage, len(resp.Messages))
-		for i, m := range resp.Messages {
-			msgs[i] = config.IncomingMessage{ID: m.ID, Message: m.Message, CreatedAt: m.CreatedAt}
-		}
-		if err := config.WriteIncomingMessages(msgs); err != nil {
-			log.Printf("failed to hand messages to tray: %v", err)
-		}
-	}
 }
 
 // maybeRunScheduledSpeedtest runs a speed test if the server-configured
