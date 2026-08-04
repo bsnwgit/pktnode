@@ -156,7 +156,13 @@ def get_settings() -> Settings:  # type: ignore[misc]
             _val = _row[0]
             _tok = _j.loads(_val) if _val.startswith('"') else _val
             if _tok:
-                s = s.model_copy(update={'suite_token': _tok})
+                from app.crypto import decrypt_str
+                # Stored value is Fernet-encrypted at rest (see
+                # _encrypt_legacy_suite_token in database.py); fall back to
+                # the raw value if decryption fails so a token written by an
+                # older build before this fix still authenticates.
+                _decrypted = decrypt_str(_tok)
+                s = s.model_copy(update={'suite_token': _decrypted or _tok})
     except Exception:
         pass
     return s
