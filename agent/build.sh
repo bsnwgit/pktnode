@@ -9,6 +9,18 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 OUT_DIR="../agent-releases"
 mkdir -p "$OUT_DIR"
 
+# Published alongside the binaries so the server can tell nodes apart from
+# what's actually available to push (Settings -> Nodes bulk update, and the
+# per-node "Update Agent" action) without executing any of them — just
+# extracts the const the binaries were built from, so it can never drift.
+AGENT_VERSION="$(sed -nE 's/^const AgentVersion = "(.*)"$/\1/p' internal/inventory/inventory.go)"
+if [ -z "$AGENT_VERSION" ]; then
+  echo "Could not extract AgentVersion from internal/inventory/inventory.go" >&2
+  exit 1
+fi
+echo "$AGENT_VERSION" > "$OUT_DIR/VERSION"
+echo "Agent version: $AGENT_VERSION"
+
 agent_targets=(
   "darwin amd64 pktnode-agent-darwin-amd64"
   "darwin arm64 pktnode-agent-darwin-arm64"
