@@ -19,6 +19,7 @@ import json
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from app.crypto import encrypt_str
 from app.dependencies import CurrentUser
 
 router = APIRouter()
@@ -39,7 +40,7 @@ async def get_suite_token(request: Request):
             async with aiosqlite.connect(settings.db_path) as db:
                 await db.execute(
                     "INSERT OR REPLACE INTO settings (key, value) VALUES ('suite_token', ?)",
-                    (json.dumps(new_token),)
+                    (json.dumps(encrypt_str(new_token)),)
                 )
                 await db.commit()
             token = new_token
@@ -73,7 +74,7 @@ async def suite_register(request: Request):
         async with aiosqlite.connect(settings.db_path) as db:
             await db.execute(
                 "INSERT OR REPLACE INTO settings (key, value) VALUES ('suite_token', ?)",
-                (json.dumps(new_token),)
+                (json.dumps(encrypt_str(new_token)),)
             )
             await db.commit()
         return JSONResponse({"status": "ok"})
@@ -96,7 +97,7 @@ async def regenerate_suite_token(request: Request):
         async with aiosqlite.connect(settings.db_path) as db:
             await db.execute(
                 "INSERT OR REPLACE INTO settings (key, value) VALUES ('suite_token', ?)",
-                (json.dumps(new_token),)
+                (json.dumps(encrypt_str(new_token)),)
             )
             await db.commit()
         return JSONResponse({"suite_token": new_token, "status": "regenerated"})

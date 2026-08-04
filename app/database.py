@@ -63,6 +63,44 @@ async def init_db() -> None:
                 await conn.commit()
 
         await _encrypt_legacy_api_keys(conn)
+        await _encrypt_legacy_suite_token(conn)
+
+
+async def _encrypt_legacy_suite_token(conn: aiosqlite.Connection) -> None:
+    """One-time data migration: the settings['suite_token'] row (pktHub's
+    inbound auth token for this app) used to be stored in plaintext.
+    Encrypt it if it isn't already a valid Fernet token. Tracked via
+    _migrations (same table the .sql migrations use) so this only does real
+    work once."""
+    marker = "999_encrypt_legacy_suite_token.py"
+    async with conn.execute(
+        "SELECT 1 FROM _migrations WHERE filename = ?", (marker,)
+    ) as cur:
+        if await cur.fetchone():
+            return
+
+    import json
+    from app.crypto import decrypt_str, encrypt_str
+
+    async with conn.execute("SELECT value FROM settings WHERE key = 'suite_token'") as cur:
+        row = await cur.fetchone()
+
+    if row and row[0]:
+        raw = row[0]
+        token = json.loads(raw) if raw.startswith('"') else raw
+        if token:
+            try:
+                already_encrypted = bool(decrypt_str(token))
+            except Exception:
+                already_encrypted = False
+            if not already_encrypted:
+                await conn.execute(
+                    "UPDATE settings SET value = ? WHERE key = 'suite_token'",
+                    (json.dumps(encrypt_str(token)),),
+                )
+
+    await conn.execute("INSERT INTO _migrations (filename) VALUES (?)", (marker,))
+    await conn.commit()
 
 
 async def _encrypt_legacy_api_keys(conn: aiosqlite.Connection) -> None:
