@@ -971,6 +971,11 @@ export default function NodeDetail() {
               </h1>
             )}
             <span className={`text-xs px-2 py-0.5 rounded-full capitalize ${STATUS_STYLES[node.status] ?? STATUS_STYLES.pending}`}>{node.status}</span>
+            <HelpButton title="Node Detail — How It Works">
+              <p><span className="text-gray-300 font-medium">Live Terminal</span> opens an interactive shell over an active connection — nothing typed or returned is logged.</p>
+              <p><span className="text-gray-300 font-medium">Queue Command</span> instead queues an action for the node to pick up on its next check-in — not live, but the command and its result are kept in history below.</p>
+              <p><span className="text-gray-300 font-medium">Override Code</span> (admin only) generates a one-time code to re-enroll or recover this node outside the normal enrollment flow.</p>
+            </HelpButton>
           </div>
           <p className="text-sm text-white mt-0.5">
             {node.hostname} · <span className="capitalize">{node.os_type}</span> {node.os_version} · {node.arch}
