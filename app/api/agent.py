@@ -312,17 +312,19 @@ async def agent_release_checksum(asset: str, node: CurrentNode) -> dict:
     """
     if not _RELEASE_ASSET_RE.match(asset):
         raise HTTPException(status_code=400, detail="Invalid asset name")
-    path = Path(get_settings().install_dir) / "agent-releases" / asset
+    releases_root = Path(get_settings().install_dir) / "agent-releases"
     try:
-        resolved = path.resolve()
-        releases_root = (Path(get_settings().install_dir) / "agent-releases").resolve()
-        if not resolved.is_relative_to(releases_root) or not resolved.is_file():
-            raise HTTPException(status_code=404, detail="Asset not found")
-        digest = hashlib.sha256(resolved.read_bytes()).hexdigest()
-    except HTTPException:
-        raise
+        # Resolve `asset` against the directory's actual contents rather than
+        # constructing a path from it directly — checking membership in a
+        # server-enumerated set (not deriving a filesystem path from
+        # caller-controlled input at all) is the strongest form of
+        # sanitization available here, independent of the regex above.
+        valid_assets = {p.name for p in releases_root.iterdir() if p.is_file()}
     except OSError:
         raise HTTPException(status_code=404, detail="Asset not found")
+    if asset not in valid_assets:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    digest = hashlib.sha256((releases_root / asset).read_bytes()).hexdigest()
     return {"asset": asset, "sha256": digest}
 
 
