@@ -92,6 +92,13 @@ export function terminalWsUrl(nodeId: number): string {
   return `${scheme}://${window.location.host}/api/nodes/${nodeId}/terminal/ws?token=${encodeURIComponent(_accessToken || '')}`
 }
 
+// Same JWT-as-query-param reasoning as terminalWsUrl above — see
+// app/api/nodes.py's files WS route.
+export function filesWsUrl(nodeId: number): string {
+  const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws'
+  return `${scheme}://${window.location.host}/api/nodes/${nodeId}/files/ws?token=${encodeURIComponent(_accessToken || '')}`
+}
+
 export const api = {
   // ── Auth ──────────────────────────────────────────────────────────────────
   // Deliberately bypasses request() — a bad password here is a normal login

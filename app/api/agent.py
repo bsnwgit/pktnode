@@ -24,7 +24,7 @@ from pydantic import BaseModel
 from app.database import get_db
 from app.dependencies import CurrentNode, DbDep, hash_agent_token
 from app import totp
-from app.terminal_hub import hub, AgentLink
+from app.terminal_hub import hub, file_hub, AgentLink
 
 log = logging.getLogger("pktnode.agent")
 router = APIRouter()
@@ -567,7 +567,12 @@ async def agent_terminal_ws(websocket: WebSocket, db: DbDep) -> None:
                 msg = json.loads(raw)
             except (ValueError, TypeError):
                 continue
-            await hub.handle_agent_message(link, msg)
+            # File-transfer messages are distinguished from terminal ones
+            # by the "file_" type prefix — see app/terminal_hub.py.
+            if str(msg.get("type", "")).startswith("file_"):
+                await file_hub.handle_agent_message(link, msg)
+            else:
+                await hub.handle_agent_message(link, msg)
     except WebSocketDisconnect:
         pass
     finally:
@@ -575,6 +580,12 @@ async def agent_terminal_ws(websocket: WebSocket, db: DbDep) -> None:
             try:
                 await link.browser.send({"type": "status", "state": "exited", "message": "Agent disconnected."})
                 await link.browser.ws.close()
+            except Exception:
+                pass
+        if link.file_browser is not None:
+            try:
+                await link.file_browser.send({"type": "status", "state": "exited", "message": "Agent disconnected."})
+                await link.file_browser.ws.close()
             except Exception:
                 pass
         hub.unregister_agent(link)
