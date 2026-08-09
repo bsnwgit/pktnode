@@ -13,14 +13,17 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 import secrets
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 
 import aiosqlite
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
+from app.config import get_settings
 from app.database import get_db
 from app.dependencies import CurrentNode, DbDep, hash_agent_token
 from app import totp
@@ -287,6 +290,40 @@ class CheckinRequest(BaseModel):
     unraid_vms: list[UnraidVMItem] = []
 
     has_tray: bool = False
+
+
+# Matches the release-artifact naming convention in agent/build.sh and the
+# StaticFiles mount used by execUpdateAgent's download in
+# internal/commands/commands.go — e.g. "pktnode-agent-linux-amd64",
+# "pktnode-tray-windows-amd64.exe".
+_RELEASE_ASSET_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,127}$")
+
+
+@router.get("/agents/release-checksum")
+async def agent_release_checksum(asset: str, node: CurrentNode) -> dict:
+    """
+    SHA-256 of a release binary in agent-releases/, gated behind the same
+    per-node bearer token as every other agent-facing endpoint. The agent
+    calls this before swapping a downloaded update binary into place
+    (execUpdateAgent/updateTrayBestEffort in internal/commands/commands.go)
+    so a tampered artifact on the unauthenticated static download mount
+    (see app/main.py) can't be installed without also forging a response
+    on this authenticated channel.
+    """
+    if not _RELEASE_ASSET_RE.match(asset):
+        raise HTTPException(status_code=400, detail="Invalid asset name")
+    path = Path(get_settings().install_dir) / "agent-releases" / asset
+    try:
+        resolved = path.resolve()
+        releases_root = (Path(get_settings().install_dir) / "agent-releases").resolve()
+        if not resolved.is_relative_to(releases_root) or not resolved.is_file():
+            raise HTTPException(status_code=404, detail="Asset not found")
+        digest = hashlib.sha256(resolved.read_bytes()).hexdigest()
+    except HTTPException:
+        raise
+    except OSError:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    return {"asset": asset, "sha256": digest}
 
 
 @router.post("/checkin")

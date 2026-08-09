@@ -11,12 +11,15 @@ package commands
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -48,8 +51,10 @@ func completed(output string) Result {
 // malformed payloads are reported back as a failed result rather than
 // propagated as an agent-level error — one bad command should never crash
 // the check-in loop. serverURL is only used by update_agent, to build the
-// download URL for this platform's release binary.
-func Execute(commandType string, rawPayload json.RawMessage, serverURL string) Result {
+// download URL for this platform's release binary; token is this agent's
+// bearer token, used by update_agent to fetch an authenticated checksum for
+// the downloaded binary before installing it (see execUpdateAgent).
+func Execute(commandType string, rawPayload json.RawMessage, serverURL, token string) Result {
 	switch commandType {
 	case "restart_service":
 		var p struct {
@@ -119,7 +124,7 @@ func Execute(commandType string, rawPayload json.RawMessage, serverURL string) R
 		return Result{Status: "completed", ExitCode: 0, Output: string(out)}
 
 	case "update_agent":
-		out, err := execUpdateAgent(serverURL)
+		out, err := execUpdateAgent(serverURL, token)
 		if err != nil {
 			return failed(err)
 		}
@@ -380,7 +385,7 @@ func rootPath() string {
 // signal on Unix, a detached helper + SCM stop on Windows) — by the time
 // it lands, the caller has already reported "completed" back to the
 // server, so the update doesn't race its own result report.
-func execUpdateAgent(serverURL string) (string, error) {
+func execUpdateAgent(serverURL, token string) (string, error) {
 	if serverURL == "" {
 		return "", fmt.Errorf("update_agent: no server URL configured")
 	}
@@ -392,11 +397,15 @@ func execUpdateAgent(serverURL string) (string, error) {
 	url := strings.TrimRight(serverURL, "/") + "/agent-releases/" + assetName
 
 	installPath := svcinstall.InstallPath()
-	tmpPath, err := downloadToTemp(url, filepath.Dir(installPath))
+	tmpPath, err := downloadToTemp(url, filepath.Dir(installPath), token)
 	if err != nil {
 		return "", fmt.Errorf("download %s: %w", url, err)
 	}
 	defer os.Remove(tmpPath) // no-op once the rename below succeeds
+
+	if err := verifyReleaseChecksum(serverURL, token, assetName, tmpPath); err != nil {
+		return "", fmt.Errorf("refusing to install %s: %w", url, err)
+	}
 
 	if err := os.Rename(tmpPath, installPath); err != nil {
 		return "", fmt.Errorf("install new binary at %s: %w", installPath, err)
@@ -406,7 +415,7 @@ func execUpdateAgent(serverURL string) (string, error) {
 		return "", fmt.Errorf("binary updated at %s but restart failed — restart the service manually: %w", installPath, err)
 	}
 
-	trayNote := updateTrayBestEffort(serverURL)
+	trayNote := updateTrayBestEffort(serverURL, token)
 	return fmt.Sprintf("downloaded %s and triggered restart%s", assetName, trayNote), nil
 }
 
@@ -418,7 +427,7 @@ func execUpdateAgent(serverURL string) (string, error) {
 // are deliberately swallowed: the agent itself already updated
 // successfully by the time this runs, and a stale tray icon is a much
 // smaller problem than reporting the whole push as failed over it.
-func updateTrayBestEffort(serverURL string) string {
+func updateTrayBestEffort(serverURL, token string) string {
 	if !svcinstall.TrayInstalled() {
 		return ""
 	}
@@ -430,11 +439,15 @@ func updateTrayBestEffort(serverURL string) string {
 	url := strings.TrimRight(serverURL, "/") + "/agent-releases/" + trayAsset
 
 	trayPath := svcinstall.TrayInstallPath()
-	tmpPath, err := downloadToTemp(url, filepath.Dir(trayPath))
+	tmpPath, err := downloadToTemp(url, filepath.Dir(trayPath), token)
 	if err != nil {
 		return "" // no build for this platform, or download failed
 	}
 	defer os.Remove(tmpPath)
+
+	if err := verifyReleaseChecksum(serverURL, token, trayAsset, tmpPath); err != nil {
+		return "" // tray update is already best-effort; just skip it
+	}
 
 	if err := os.Rename(tmpPath, trayPath); err != nil {
 		return ""
@@ -446,10 +459,20 @@ func updateTrayBestEffort(serverURL string) string {
 
 // downloadToTemp fetches url into a new temp file inside dir (so the
 // caller's later os.Rename into dir stays on the same filesystem and is
-// atomic) and marks it executable.
-func downloadToTemp(url, dir string) (string, error) {
+// atomic) and marks it executable. token is sent as a Bearer credential —
+// the release mount itself doesn't currently require it (see
+// app/main.py's StaticFiles mount), but sending it costs nothing and
+// stops this from silently regressing if that mount is ever locked down.
+func downloadToTemp(url, dir, token string) (string, error) {
 	client := &http.Client{Timeout: 5 * time.Minute}
-	resp, err := client.Get(url)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return "", err
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -479,4 +502,64 @@ func downloadToTemp(url, dir string) (string, error) {
 		return "", err
 	}
 	return tmpPath, nil
+}
+
+// verifyReleaseChecksum fetches the SHA-256 of assetName from the server's
+// authenticated GET /api/agents/release-checksum endpoint (gated behind
+// this agent's bearer token, unlike the plain static file download) and
+// compares it against the file at tmpPath. This is the actual security
+// boundary for update_agent: the download itself comes from an
+// unauthenticated static mount, so anything that can influence that mount
+// (path traversal, a compromised object store behind it, a MITM on a
+// misconfigured http:// serverURL) could otherwise substitute a binary
+// that then runs as root/SYSTEM with zero verification. Requiring it to
+// also match a value obtained over the authenticated channel raises the
+// bar to also forging a response there.
+func verifyReleaseChecksum(serverURL, token, assetName, tmpPath string) error {
+	checksumURL := strings.TrimRight(serverURL, "/") +
+		"/api/agents/release-checksum?asset=" + url.QueryEscape(assetName)
+
+	req, err := http.NewRequest(http.MethodGet, checksumURL, nil)
+	if err != nil {
+		return fmt.Errorf("build checksum request: %w", err)
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("fetch expected checksum: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("fetch expected checksum: HTTP %d", resp.StatusCode)
+	}
+
+	var body struct {
+		SHA256 string `json:"sha256"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return fmt.Errorf("decode checksum response: %w", err)
+	}
+	if body.SHA256 == "" {
+		return fmt.Errorf("server returned an empty checksum")
+	}
+
+	f, err := os.Open(tmpPath)
+	if err != nil {
+		return fmt.Errorf("open downloaded file: %w", err)
+	}
+	defer f.Close()
+
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return fmt.Errorf("hash downloaded file: %w", err)
+	}
+	actual := hex.EncodeToString(h.Sum(nil))
+
+	if !strings.EqualFold(actual, body.SHA256) {
+		return fmt.Errorf("checksum mismatch: downloaded file does not match the authenticated release checksum (got %s, expected %s)", actual, body.SHA256)
+	}
+	return nil
 }

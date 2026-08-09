@@ -20,7 +20,7 @@ import (
 	"github.com/shirou/gopsutil/v3/process"
 )
 
-const AgentVersion = "0.9.1"
+const AgentVersion = "0.9.2"
 
 // Collect gathers a full snapshot. fullInventory controls whether the
 // (more expensive) software/process lists are populated — the agent
