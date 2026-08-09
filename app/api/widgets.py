@@ -7,8 +7,10 @@ Options:  GET /api/widgets/options/* → JSON [{value,label}] for dynamic param 
 """
 from __future__ import annotations
 
+import secrets
+
 import aiosqlite
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from app.config import get_settings
@@ -17,6 +19,20 @@ from app.api.nodes import _STATUS_EXPR, _status_params
 router = APIRouter()
 _s     = get_settings()
 _DB    = _s.db_path
+
+
+async def require_suite_token(request: Request) -> None:
+    """
+    Widget views/options are embedded via pktHub's server-side proxy
+    (proxy-display), which always attaches X-Suite-Token — never loaded
+    directly by a browser. Require a valid token so the underlying node
+    inventory/metrics/alerts data isn't reachable by anyone who can just
+    reach the port.
+    """
+    settings = get_settings()
+    token = request.headers.get("x-suite-token", "")
+    if not token or not settings.suite_token or not secrets.compare_digest(token, settings.suite_token):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Valid X-Suite-Token required")
 
 # ── Manifest ──────────────────────────────────────────────────────────────────
 MANIFEST = [
@@ -96,7 +112,8 @@ def _status_badge(status: str) -> str:
 
 
 # ── Node Status widget ────────────────────────────────────────────────────────
-@router.get("/node_status", response_class=HTMLResponse, include_in_schema=False)
+@router.get("/node_status", response_class=HTMLResponse, include_in_schema=False,
+            dependencies=[Depends(require_suite_token)])
 async def widget_node_status():
     rows = []
     try:
@@ -132,7 +149,8 @@ async def widget_node_status():
 
 
 # ── Node Metrics widget (per-node, dynamic) ──────────────────────────────────
-@router.get("/node_metrics", response_class=HTMLResponse, include_in_schema=False)
+@router.get("/node_metrics", response_class=HTMLResponse, include_in_schema=False,
+            dependencies=[Depends(require_suite_token)])
 async def widget_node_metrics(node_id: int | None = None):
     if not node_id:
         return HTMLResponse(_page("Node Metrics", '<div class="empty">Select a node</div>'))
@@ -177,7 +195,8 @@ async def widget_node_metrics(node_id: int | None = None):
 
 
 # ── Active Alerts widget ──────────────────────────────────────────────────────
-@router.get("/active_alerts", response_class=HTMLResponse, include_in_schema=False)
+@router.get("/active_alerts", response_class=HTMLResponse, include_in_schema=False,
+            dependencies=[Depends(require_suite_token)])
 async def widget_active_alerts():
     rows = []
     try:
@@ -210,7 +229,7 @@ async def widget_active_alerts():
 
 
 # ── Param option pickers ──────────────────────────────────────────────────────
-@router.get("/options/nodes")
+@router.get("/options/nodes", dependencies=[Depends(require_suite_token)])
 async def widget_options_nodes():
     try:
         async with aiosqlite.connect(_DB) as db:

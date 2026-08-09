@@ -180,12 +180,30 @@ func ReadAndClearStopRequest() (*StopRequest, bool) {
 }
 
 // WriteStopResponse is called by the root agent after checking a request.
+// WriteStopResponse writes without following a pre-existing symlink at the
+// target path. controlDir() is a fixed, world-writable-by-design path (see
+// applyControlDirACL) so any local user can plant a symlink named
+// stop-response.json pointing at an arbitrary file; a plain os.WriteFile
+// would follow it and truncate/overwrite that target with this root
+// process's privileges every ~2s poll cycle. Remove first (unlink never
+// follows a symlink) then create with O_EXCL so a symlink replanted in the
+// gap makes the write fail loudly instead of silently landing on it.
 func WriteStopResponse(ok bool, message string) error {
 	data, err := json.Marshal(StopResponse{OK: ok, Message: message})
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(stopResponsePath(), data, 0o666)
+	path := stopResponsePath()
+	_ = os.Remove(path) // best-effort; ENOENT is fine, anything else surfaces on the Open below
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o666)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if _, err := f.Write(data); err != nil {
+		return err
+	}
+	return nil
 }
 
 // ReadAndClearStopResponse is polled by the tray after it submits a request.
