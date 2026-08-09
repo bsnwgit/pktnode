@@ -7,7 +7,7 @@ import {
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
-import { api, terminalWsUrl, NodeDetail as NodeDetailType, CommandRecord, GroupInfo, SpeedtestResult } from '../api/client'
+import { api, terminalWsUrl, filesWsUrl, NodeDetail as NodeDetailType, CommandRecord, GroupInfo, SpeedtestResult } from '../api/client'
 import { useAuth } from '../store/auth'
 import HelpButton from '../components/HelpButton'
 
@@ -615,6 +615,306 @@ function LiveTerminalModal({ nodeId, hostname, onClose }: { nodeId: number; host
   )
 }
 
+type FileEntry = { name: string; path: string; is_dir: boolean; size: number; modified: string }
+type Crumb = { label: string; path: string }
+const FILE_CHUNK_SIZE = 256 * 1024
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`
+  const units = ['KB', 'MB', 'GB', 'TB']
+  let v = n
+  let i = -1
+  do { v /= 1024; i++ } while (v >= 1024 && i < units.length - 1)
+  return `${v.toFixed(1)} ${units[i]}`
+}
+
+// Remote file browser + up/download over the same kind of always-open
+// agent control channel Live Terminal uses, just a second independent
+// session on it — see agent/internal/terminal/file.go and
+// app/terminal_hub.py's FileHub for the wire protocol. No request ids on
+// the wire, so only one transfer runs at a time; browsing/mkdir/delete/
+// rename are disabled while a transfer is in flight to avoid ambiguous
+// interleaved responses.
+function FileTransferModal({ nodeId, hostname, onClose }: { nodeId: number; hostname: string; onClose: () => void }) {
+  const wsRef = useRef<WebSocket | null>(null)
+  const [state, setState] = useState<TermState>('connecting')
+  const [message, setMessage] = useState('')
+  const [crumbs, setCrumbs] = useState<Crumb[]>([{ label: 'Root', path: '' }])
+  const [entries, setEntries] = useState<FileEntry[]>([])
+  const [dragOver, setDragOver] = useState(false)
+  const [transfer, setTransfer] = useState<{ kind: 'upload' | 'download'; name: string; sent: number; total: number } | null>(null)
+  const downloadRef = useRef<{ name: string; chunks: Uint8Array[] } | null>(null)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+
+  const currentPath = crumbs[crumbs.length - 1].path
+
+  useEffect(() => {
+    const ws = new WebSocket(filesWsUrl(nodeId))
+    ws.binaryType = 'arraybuffer'
+    wsRef.current = ws
+
+    ws.onmessage = (ev) => {
+      const msg = JSON.parse(ev.data)
+      if (msg.type === 'status') {
+        setState(msg.state)
+        setMessage(msg.message || '')
+      } else if (msg.type === 'ready') {
+        setState('active')
+        // Land in the home directory rather than the raw filesystem root
+        // by default — root is a dead end for uploads on modern macOS
+        // (its "/" volume is sealed read-only) and rarely where anyone
+        // actually wants to browse. Root is still one breadcrumb away.
+        if (msg.home) {
+          setCrumbs([{ label: 'Root', path: '' }, { label: 'Home', path: msg.home }])
+          ws.send(JSON.stringify({ type: 'list', path: msg.home }))
+        } else {
+          ws.send(JSON.stringify({ type: 'list', path: '' }))
+        }
+      } else if (msg.type === 'list_result') {
+        setEntries(msg.entries || [])
+      } else if (msg.type === 'chunk') {
+        if (downloadRef.current) {
+          const bytes = base64ToBytes(msg.data)
+          downloadRef.current.chunks.push(bytes)
+          setTransfer(t => t ? { ...t, sent: t.sent + bytes.length } : t)
+        }
+      } else if (msg.type === 'download_done') {
+        const dl = downloadRef.current
+        downloadRef.current = null
+        setTransfer(null)
+        if (dl) {
+          const blob = new Blob(dl.chunks as BlobPart[])
+          const url = URL.createObjectURL(blob)
+          const a = document.createElement('a')
+          a.href = url
+          a.download = dl.name
+          a.click()
+          URL.revokeObjectURL(url)
+        }
+      } else if (msg.type === 'upload_done') {
+        setTransfer(null)
+        ws.send(JSON.stringify({ type: 'list', path: currentPathRef.current }))
+      } else if (msg.type === 'op_result') {
+        if (!msg.ok) {
+          setMessage(msg.message || `Failed to ${msg.op || 'complete that action'}.`)
+        } else {
+          ws.send(JSON.stringify({ type: 'list', path: currentPathRef.current }))
+        }
+      }
+    }
+    ws.onclose = () => setState(prev => (prev === 'active' ? 'exited' : prev))
+    ws.onerror = () => { setState('error'); setMessage('Connection to the server failed.') }
+
+    return () => ws.close()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nodeId])
+
+  // Mutable mirror of currentPath so the onmessage closure above (created
+  // once per WebSocket connection) always re-lists the directory the user
+  // is actually looking at, not whatever it was when the socket opened.
+  const currentPathRef = useRef(currentPath)
+  useEffect(() => { currentPathRef.current = currentPath }, [currentPath])
+
+  const send = (payload: object) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) wsRef.current.send(JSON.stringify(payload))
+  }
+
+  const openDir = (entry: FileEntry) => {
+    if (transfer) return
+    setCrumbs(c => [...c, { label: entry.name, path: entry.path }])
+    send({ type: 'list', path: entry.path })
+  }
+  const goToCrumb = (idx: number) => {
+    if (transfer) return
+    setCrumbs(c => c.slice(0, idx + 1))
+    send({ type: 'list', path: crumbs[idx].path })
+  }
+  const refresh = () => send({ type: 'list', path: currentPath })
+
+  const downloadFile = (entry: FileEntry) => {
+    if (transfer) return
+    downloadRef.current = { name: entry.name, chunks: [] }
+    setTransfer({ kind: 'download', name: entry.name, sent: 0, total: entry.size })
+    send({ type: 'download', path: entry.path })
+  }
+
+  const deleteEntry = (entry: FileEntry) => {
+    if (transfer) return
+    if (!window.confirm(`Delete "${entry.name}"?${entry.is_dir ? ' This deletes everything inside it too.' : ''}`)) return
+    send({ type: 'delete', path: entry.path })
+  }
+
+  const renameEntry = (entry: FileEntry) => {
+    if (transfer) return
+    const name = window.prompt('New name', entry.name)
+    if (!name || name === entry.name) return
+    send({ type: 'rename', path: entry.path, new_name: name })
+  }
+
+  const makeFolder = () => {
+    if (transfer) return
+    const name = window.prompt('New folder name')
+    if (!name) return
+    send({ type: 'mkdir', path: currentPath, new_name: name })
+  }
+
+  const uploadFile = async (file: File) => {
+    if (transfer) return
+    setTransfer({ kind: 'upload', name: file.name, sent: 0, total: file.size })
+    send({ type: 'upload_start', path: currentPath, new_name: file.name, size: file.size })
+    const buf = new Uint8Array(await file.arrayBuffer())
+    for (let offset = 0; offset < buf.length; offset += FILE_CHUNK_SIZE) {
+      const ws = wsRef.current
+      if (!ws || ws.readyState !== WebSocket.OPEN) return
+      // Backpressure: don't queue the whole file into the browser's send
+      // buffer at once — wait for it to drain between chunks.
+      while (ws.bufferedAmount > 4 * 1024 * 1024) {
+        await new Promise(r => setTimeout(r, 20))
+      }
+      const chunk = buf.subarray(offset, offset + FILE_CHUNK_SIZE)
+      ws.send(JSON.stringify({ type: 'upload_chunk', data: bytesToBase64(chunk) }))
+      setTransfer(t => t ? { ...t, sent: offset + chunk.length } : t)
+    }
+    send({ type: 'upload_end' })
+  }
+
+  const onFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (file) uploadFile(file)
+  }
+
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    setDragOver(false)
+    const file = e.dataTransfer.files?.[0]
+    if (file) uploadFile(file)
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+      <div className="bg-gray-900 border border-gray-700 rounded-xl w-full max-w-4xl h-[80vh] flex flex-col p-4">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h2 className="text-lg font-semibold text-white">File Transfer — {hostname}</h2>
+            {state !== 'active' && (
+              <p className={`text-xs mt-0.5 ${state === 'error' ? 'text-red-400' : 'text-white'}`}>
+                {state === 'connecting' && 'Connecting…'}
+                {state === 'exited' && (message || 'Session ended.')}
+                {state === 'error' && (message || 'Something went wrong.')}
+              </p>
+            )}
+            {state === 'active' && message && <p className="text-xs mt-0.5 text-red-400">{message}</p>}
+          </div>
+          <button onClick={onClose} className="text-sm text-white hover:text-white transition-colors">Close</button>
+        </div>
+
+        {state === 'active' && (
+          <>
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <div className="flex items-center gap-1 flex-wrap text-xs">
+                {crumbs.map((c, idx) => (
+                  <span key={idx} className="flex items-center gap-1">
+                    {idx > 0 && <span className="text-white">/</span>}
+                    <button
+                      onClick={() => goToCrumb(idx)}
+                      disabled={!!transfer}
+                      className={`px-1.5 py-0.5 rounded hover:bg-gray-800 ${idx === crumbs.length - 1 ? 'text-white font-medium' : 'text-white'}`}
+                    >
+                      {c.label}
+                    </button>
+                  </span>
+                ))}
+              </div>
+              <div className="flex items-center gap-2">
+                <button onClick={refresh} disabled={!!transfer}
+                  className="px-3 py-1.5 text-xs bg-gray-800 hover:bg-gray-700 text-white rounded-lg transition-colors disabled:opacity-50">
+                  Refresh
+                </button>
+                <button onClick={makeFolder} disabled={!!transfer}
+                  className="px-3 py-1.5 text-xs bg-gray-800 hover:bg-gray-700 text-white rounded-lg transition-colors disabled:opacity-50">
+                  New Folder
+                </button>
+                <button onClick={() => fileInputRef.current?.click()} disabled={!!transfer}
+                  className="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors disabled:opacity-50">
+                  Upload
+                </button>
+                <input ref={fileInputRef} type="file" className="hidden" onChange={onFileInputChange} />
+              </div>
+            </div>
+
+            {transfer && (
+              <div className="mb-2 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2">
+                <div className="flex items-center justify-between text-xs text-white mb-1">
+                  <span>{transfer.kind === 'upload' ? 'Uploading' : 'Downloading'} {transfer.name}</span>
+                  <span>{formatBytes(transfer.sent)}{transfer.total ? ` / ${formatBytes(transfer.total)}` : ''}</span>
+                </div>
+                <div className="h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-blue-500 transition-all"
+                    style={{ width: transfer.total ? `${Math.min(100, (transfer.sent / transfer.total) * 100)}%` : '100%' }}
+                  />
+                </div>
+              </div>
+            )}
+
+            <div
+              className={`flex-1 rounded-lg overflow-y-auto border ${dragOver ? 'border-blue-500 bg-blue-500/5' : 'border-gray-800 bg-gray-950'}`}
+              onDragOver={e => { e.preventDefault(); setDragOver(true) }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={onDrop}
+            >
+              <table className="w-full text-xs">
+                <thead className="sticky top-0 bg-gray-900 text-white">
+                  <tr>
+                    <th className="text-left font-medium px-3 py-2">Name</th>
+                    <th className="text-left font-medium px-3 py-2">Size</th>
+                    <th className="text-left font-medium px-3 py-2">Modified</th>
+                    <th className="text-right font-medium px-3 py-2">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {entries.length === 0 && (
+                    <tr><td colSpan={4} className="px-3 py-6 text-center text-white">Empty directory</td></tr>
+                  )}
+                  {entries.map(entry => (
+                    <tr key={entry.path} className="border-t border-gray-800 hover:bg-gray-900">
+                      <td className="px-3 py-1.5">
+                        <button
+                          onClick={() => entry.is_dir ? openDir(entry) : undefined}
+                          disabled={!!transfer}
+                          className={`text-white ${entry.is_dir ? 'hover:text-blue-400 cursor-pointer' : 'cursor-default'}`}
+                        >
+                          {entry.is_dir ? '📁' : '📄'} {entry.name}
+                        </button>
+                      </td>
+                      <td className="px-3 py-1.5 text-white">{entry.is_dir ? '—' : formatBytes(entry.size)}</td>
+                      <td className="px-3 py-1.5 text-white">{entry.modified ? new Date(entry.modified).toLocaleString() : '—'}</td>
+                      <td className="px-3 py-1.5">
+                        <div className="flex items-center justify-end gap-2">
+                          {!entry.is_dir && (
+                            <button onClick={() => downloadFile(entry)} disabled={!!transfer}
+                              className="text-blue-400 hover:text-blue-300 disabled:opacity-50">Download</button>
+                          )}
+                          <button onClick={() => renameEntry(entry)} disabled={!!transfer}
+                            className="text-white hover:text-white disabled:opacity-50">Rename</button>
+                          <button onClick={() => deleteEntry(entry)} disabled={!!transfer}
+                            className="text-red-400 hover:text-red-300 disabled:opacity-50">Delete</button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="text-xs text-white mt-2">Drag and drop a file anywhere in the list to upload it here. 500 MB limit per file.</p>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function OverrideCodeModal({ nodeId, onClose }: { nodeId: number; onClose: () => void }) {
   const [code, setCode] = useState<string | null>(null)
   const [expiresIn, setExpiresIn] = useState(0)
@@ -686,6 +986,7 @@ export default function NodeDetail() {
   const [loading, setLoading] = useState(true)
   const [showConsole, setShowConsole] = useState(false)
   const [showTerminal, setShowTerminal] = useState(false)
+  const [showFiles, setShowFiles] = useState(false)
   const [consoleSeed, setConsoleSeed] = useState<CommandRecord | null>(null)
   const openConsole = (seed: CommandRecord | null) => { setConsoleSeed(seed); setShowConsole(true) }
   const [showOverrideCode, setShowOverrideCode] = useState(false)
@@ -973,6 +1274,7 @@ export default function NodeDetail() {
             <span className={`text-xs px-2 py-0.5 rounded-full capitalize ${STATUS_STYLES[node.status] ?? STATUS_STYLES.pending}`}>{node.status}</span>
             <HelpButton title="Node Detail — How It Works">
               <p><span className="text-gray-300 font-medium">Live Terminal</span> opens an interactive shell over an active connection — nothing typed or returned is logged.</p>
+              <p><span className="text-gray-300 font-medium">File Transfer</span> browses the node's filesystem and lets you upload or download files, over the same kind of live connection as Live Terminal. Opens into the node's home directory by default. On macOS, root and core system folders are sealed read-only by the OS itself (even for admins) — that's expected, not a bug; use the home directory or another normal folder instead.</p>
               <p><span className="text-gray-300 font-medium">Queue Command</span> instead queues an action for the node to pick up on its next check-in — not live, but the command and its result are kept in history below.</p>
               <p><span className="text-gray-300 font-medium">Override Code</span> (admin only) generates a one-time code to re-enroll or recover this node outside the normal enrollment flow.</p>
             </HelpButton>
@@ -987,6 +1289,11 @@ export default function NodeDetail() {
               title="Instant interactive shell — connects live, nothing is logged"
               className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors">
               Live Terminal
+            </button>
+            <button onClick={() => setShowFiles(true)}
+              title="Browse the node's filesystem and upload or download files"
+              className="px-4 py-2 text-sm bg-gray-800 hover:bg-gray-700 text-white rounded-lg transition-colors">
+              File Transfer
             </button>
           </div>
         )}
@@ -1894,6 +2201,13 @@ export default function NodeDetail() {
           nodeId={Number(id)}
           hostname={node.display_name || node.hostname}
           onClose={() => setShowTerminal(false)}
+        />
+      )}
+      {showFiles && id && (
+        <FileTransferModal
+          nodeId={Number(id)}
+          hostname={node.display_name || node.hostname}
+          onClose={() => setShowFiles(false)}
         />
       )}
     </div>

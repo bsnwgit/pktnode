@@ -24,7 +24,7 @@ Prompts for install directory and port (default `8764`), handles the venv, `conf
 
 ## Users & roles
 
-Admin and analyst can queue commands, open Live Terminal, and bulk-manage nodes; only admins reach Enrollment, Settings, Override Code, and decommission/delete actions. Manage accounts at Settings → Security → Users.
+Admin and analyst can queue commands, open Live Terminal and File Transfer, and bulk-manage nodes; only admins reach Enrollment, Settings, Override Code, and decommission/delete actions. Manage accounts at Settings → Security → Users.
 
 ## Enrollment
 
@@ -119,6 +119,14 @@ A node's Utils → **Speed Test** subtab runs a real download/upload/latency tes
 
 A real interactive shell, opened via a persistent outbound WebSocket the agent keeps open (separate from its periodic HTTP check-in) — the server relays between that and an admin's browser session. The node never accepts an inbound connection of any kind, so no firewall changes are needed on the managed machine. A second admin opening a terminal on the same node preempts (doesn't queue behind) the existing session. If the node has no live control-channel connection (agent offline, or an older build predating this feature), the button reports that plainly.
 
+## File Transfer (agent 0.9.0+)
+
+A remote file browser — navigate directories, upload/download files (drag-and-drop or a picker), create folders, rename, and delete — opened via **File Transfer**, next to Live Terminal on a node's detail page. It rides the same always-open control channel Live Terminal uses, as a second, independent session, so the two can be open on the same node at once without either preempting the other; a second admin opening File Transfer on the same node preempts only the existing *file* session, not any terminal session. 500 MB cap per file — it's built for configs, logs, and installers over chunked JSON/base64 frames, not bulk transfers. The initial listing lands in the node's home directory (agent 0.9.1+), with a **Root** breadcrumb to browse the whole filesystem from there.
+
+**Important — macOS's sealed System volume will reject writes there, and this is correct, expected OS behavior, not a bug.** Since Big Sur, macOS's `/`, `/System`, `/bin`, `/sbin`, and `/usr` (excluding `/usr/local`) live on a cryptographically signed, read-only System volume — enforced by signature verification, not a Unix permission bit, so **nothing run in a normal session can write there, at any privilege level**. `sudo scp` over Live Terminal hits the identical "read-only file system" error File Transfer would show for the same path, because both are ordinary userland processes on the running OS. The only way to write to that volume requires booting into macOS Recovery Mode and running `csrutil authenticated-root disable`, then rebooting — local/physical console access, not something reachable through Live Terminal or File Transfer. Tell users hitting this to navigate into the home directory (the default) or another writable location — `/Users/...`, `/Library`, `/Applications`, `/private/tmp`, `/private/var` — all of which are firmlinked to the writable Data volume and work normally. Linux and Windows nodes have no equivalent volume-level restriction; ordinary filesystem permissions are all that apply.
+
+Agents older than 0.9.0 keep their control channel open (Live Terminal still works) but have no case for the file transfer protocol, so a File Transfer session just sits at "Connecting…" indefinitely with no error — push an agent update (see **Updating agents** above) to fix it.
+
 ## Check In Now (agent 0.3.0+)
 
 The same always-open control channel that powers Live Terminal also carries a lightweight "check in right now" push — **Check In Now** on a node's detail page, next to Live Terminal. It skips the rest of that node's current check-in interval instead of waiting it out, which is what makes a just-queued command (including `update_agent`) or a fresh inventory snapshot show up immediately instead of after a wait bounded by the check-in interval. Same reachability requirement as Live Terminal — a node with no live control-channel connection reports that plainly rather than silently doing nothing. **Agents older than 0.3.0 keep their control channel open (Live Terminal still works) but silently ignore this specific push** — harmless, it just means the button has no visible effect until that node is updated once.
@@ -168,6 +176,8 @@ Configure schedule and rotation at Settings → Data → Backups. Each snapshot 
 | Service won't start | `journalctl -u pktnode -n 50`; check `config.yaml` and secret key |
 | A node never comes online after install | Confirm the install command reached the machine and that it can reach the server URL over the network; check the enrollment token hasn't expired or hit its use limit |
 | Live Terminal reports no connection | Agent may be offline, or predates this feature — rebuild/update the agent |
+| File Transfer stuck on "Connecting…" | Agent predates 0.9.0 — update it (Live Terminal working on the same node confirms the control channel itself is fine) |
+| File Transfer says "read-only file system" on macOS | Expected — that path is on the sealed System volume (root, `/System`, `/bin`, `/sbin`, `/usr`); no privilege level can write there outside Recovery Mode. Navigate to the home directory or another writable location instead |
 | A restored `config.yaml` didn't take effect | Restart the service — restoring never does this automatically |
 | HAOS add-on install fails with "Dockerfile is missing" | Add-on Store listing is stale — **Settings → System → Restart → Restart Home Assistant**, then reinstall |
 | Unraid agent won't survive a reboot | Check `/boot/config/go` has the pktNode block — reinstalling repairs it |
