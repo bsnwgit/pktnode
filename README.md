@@ -9,8 +9,9 @@ user-level assets (Mac/Windows/Linux endpoints) via a lightweight Go agent
 that enrolls with the server, checks in on an interval reporting hardware/
 software inventory and live resource usage, executes queued remote actions
 (service restarts, reboot/shutdown, agent self-update), and opens an
-instant interactive shell on a node (Live Terminal) or forces an immediate
-check-in, both over the same always-open control channel.
+instant interactive shell on a node (Live Terminal), browses/transfers
+files on it (File Transfer), or forces an immediate check-in — all three
+over the same always-open control channel.
 
 **Default port:** `8764` (HTTP)
 
@@ -66,9 +67,14 @@ each one and reports the result via
 
 Separately from that polling loop, the agent also keeps one persistent
 outbound WebSocket open to `/api/agent/terminal/ws` for its whole run — a
-control channel used only for [Live Terminal](#live-terminal) sessions,
-relayed through the in-memory `app/terminal_hub.py` registry to whichever
-admin browser opened a matching `/api/nodes/{id}/terminal/ws` connection.
+control channel carrying two independent kinds of session, relayed
+through the in-memory `app/terminal_hub.py` registry: [Live
+Terminal](#live-terminal) sessions to a matching
+`/api/nodes/{id}/terminal/ws` browser connection, and [File
+Transfer](#file-transfer) sessions to a matching
+`/api/nodes/{id}/files/ws` one. A node can have one of each open at once
+(a terminal and a file browser don't preempt each other, only a second
+session of their own kind does).
 
 ## Requirements
 
@@ -160,7 +166,9 @@ itself.
   - Admins/analysts also get a **Live Terminal** button in the page header
     for an instant, interactive shell on the node (see
     [Live Terminal](#live-terminal) below) — nothing queued, nothing
-    logged.
+    logged — plus a **File Transfer** button to browse the node's
+    filesystem and upload/download files (see
+    [File Transfer](#file-transfer) below).
 - **Enrollment** (`/enrollment`, admin only) — its own top-level nav item,
   not under Settings — issue and manage enrollment tokens (see
   [Enrolling a node](#enrolling-a-node)).
@@ -450,6 +458,51 @@ started a new terminal session on this node" and closed. If the node has
 no live control-channel connection (agent offline, or an older agent
 build that predates this feature), the button reports that plainly
 instead of hanging.
+
+### File Transfer (agent 0.9.0+)
+
+Browse, upload, download, rename, delete, and create folders on a node's
+filesystem from the **File Transfer** button next to Live Terminal — a
+second, independent session type multiplexed over the same control
+channel (`agent/internal/terminal/file.go` on the agent,
+`app/terminal_hub.py`'s `FileHub` on the server), so it can be open at the
+same time as a Live Terminal session on the same node without either
+preempting the other. Same reachability requirement and same preemption
+rule as Live Terminal, just scoped to its own session slot: no live
+connection reports that plainly, and a second admin opening File Transfer
+on the same node preempts the first. Transfers are chunked JSON/base64
+frames over that WebSocket, capped at 500 MB per file — built for configs,
+logs, and installers, not bulk/bare-metal-scale transfers.
+
+**Defaults into the node's home directory, not filesystem root (agent
+0.9.1+)** — the initial listing lands wherever `os.UserHomeDir()` resolves
+on that node, with a **Root** breadcrumb one click away for browsing the
+whole filesystem. This matters specifically because of:
+
+**macOS's sealed System volume — expected read-only behavior, not a
+bug.** Since Big Sur, macOS boots from a cryptographically signed, sealed
+System volume: `/`, `/System`, `/bin`, `/sbin`, and `/usr` (excluding
+`/usr/local`) are read-only for *everyone*, including root — this is
+enforced by the volume's signature check, not a Unix permission bit, so
+**no privilege level can write there over a normal session**. `sudo scp`
+over Live Terminal fails with the identical "read-only file system" error
+File Transfer would show, because both are just an ordinary userland
+process on the running OS. The only way to write to that volume at all is
+`csrutil authenticated-root disable` from macOS Recovery Mode followed by
+a reboot — local/physical (or remote-KVM-style) console access, not
+reachable from any agent-mediated session. Everything else a user would
+actually want to reach — `/Users`, `/Library`, `/Applications`,
+`/private/tmp`, `/private/var`, and every home directory — is firmlinked
+to the writable Data volume and works normally through File Transfer, same
+as it would through `scp`. Linux and Windows nodes have no equivalent
+volume-level restriction; ordinary filesystem permissions are all that
+apply there.
+
+Agents older than 0.9.0 don't understand the file_* protocol at all — the
+control channel stays open (Live Terminal still works) but a File
+Transfer session just sits at "Connecting…" with no response, same as any
+other message type an older agent's dispatch loop has no case for. Push
+an [agent update](#updating-agents) to fix that.
 
 ### Check In Now (agent 0.3.0+)
 
@@ -747,6 +800,19 @@ restored DB.
   reaching the configured AI provider — unrelated to Ollama/Anthropic/OpenAI
   settings. Also fixed: connection/timeout failures reaching a provider used
   to show a blank error message; they now name the provider and its base URL.
+- **File Transfer says "read-only file system" uploading to a macOS
+  node**: expected behavior, not a bug — see
+  [File Transfer](#file-transfer) above. It means the target is on the
+  sealed System volume (root, `/System`, `/bin`, `/sbin`, `/usr`); navigate
+  into the home directory (the default landing spot on agent 0.9.1+) or
+  another writable location like `/Users/...`, `/Library`, `/Applications`,
+  or `/private/tmp` instead. No privilege level, including `sudo` over
+  Live Terminal, can write to that volume in a normal session.
+- **File Transfer session sits at "Connecting…" forever**: the node's
+  agent predates 0.9.0 and doesn't understand the file transfer protocol —
+  push an [agent update](#updating-agents); Live Terminal on the same node
+  working fine is consistent with this (its control channel is open, just
+  an older build).
 
 ## Development
 

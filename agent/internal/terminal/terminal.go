@@ -32,6 +32,18 @@ type wireMsg struct {
 	Data      string `json:"data,omitempty"`
 	Code      int    `json:"code,omitempty"`
 	Message   string `json:"message,omitempty"`
+
+	// File-transfer fields — see file.go. Kept on the same struct rather
+	// than a second type so the one read loop in runOnce can decode every
+	// control-channel message (terminal or file) with a single Unmarshal.
+	Path    string      `json:"path,omitempty"`
+	NewName string      `json:"new_name,omitempty"`
+	Size    int64       `json:"size,omitempty"`
+	Entries []fileEntry `json:"entries,omitempty"`
+	Roots   []string    `json:"roots,omitempty"`
+	Home    string      `json:"home,omitempty"`
+	Op      string      `json:"op,omitempty"`
+	Ok      bool        `json:"ok"`
 }
 
 // ptySession is implemented per-OS: terminal_unix.go (darwin/linux, via a
@@ -98,7 +110,9 @@ func runOnce(serverURL, agentToken string, stopCh <-chan struct{}, onConnected f
 	onConnected()
 	log.Println("terminal: control channel connected")
 
-	mgr := &sessionManager{conn: conn}
+	sc := &safeConn{conn: conn}
+	mgr := &sessionManager{sc: sc}
+	fileMgr := &fileManager{sc: sc}
 	defer mgr.stopCurrent()
 
 	closed := make(chan struct{})
@@ -126,15 +140,39 @@ func runOnce(serverURL, agentToken string, stopCh <-chan struct{}, onConnected f
 			}
 			continue
 		}
-		mgr.handle(msg)
+		if strings.HasPrefix(msg.Type, "file_") {
+			fileMgr.handle(msg)
+		} else {
+			mgr.handle(msg)
+		}
 	}
+}
+
+// safeConn serializes writes to the shared control-channel connection.
+// gorilla/websocket allows only one concurrent writer, and both the
+// terminal session manager and the file manager (file.go) write to this
+// same connection — one from its output-pump goroutine, the other from
+// its download-streaming goroutine — so they share this one lock rather
+// than each keeping their own.
+type safeConn struct {
+	conn    *websocket.Conn
+	writeMu sync.Mutex
+}
+
+func (s *safeConn) send(msg wireMsg) {
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	_ = s.conn.WriteMessage(websocket.TextMessage, data)
 }
 
 // sessionManager runs at most one PTY session at a time, matching the
 // server-side hub's one-session-per-node policy.
 type sessionManager struct {
-	conn    *websocket.Conn
-	writeMu sync.Mutex
+	sc *safeConn
 
 	mu        sync.Mutex
 	sessionID string
@@ -142,13 +180,7 @@ type sessionManager struct {
 }
 
 func (m *sessionManager) send(msg wireMsg) {
-	data, err := json.Marshal(msg)
-	if err != nil {
-		return
-	}
-	m.writeMu.Lock()
-	defer m.writeMu.Unlock()
-	_ = m.conn.WriteMessage(websocket.TextMessage, data)
+	m.sc.send(msg)
 }
 
 func (m *sessionManager) current() (string, ptySession) {
