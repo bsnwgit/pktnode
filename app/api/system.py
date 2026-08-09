@@ -281,6 +281,15 @@ async def import_bundle(file: UploadFile = File(...), files: Optional[str] = For
 
             try:
                 with tarfile.open(str(archive_path), "r:gz") as tar:
+                    tmp_root = tmp_path.resolve()
+                    for member in tar.getmembers():
+                        member_path = (tmp_path / member.name).resolve()
+                        if not member_path.is_relative_to(tmp_root):
+                            return {"error": f"Refusing to extract archive: unsafe path in member '{member.name}'"}
+                        if member.issym() or member.islnk():
+                            link_target = (tmp_path / member.name).parent.joinpath(member.linkname).resolve()
+                            if not link_target.is_relative_to(tmp_root):
+                                return {"error": f"Refusing to extract archive: unsafe link target in member '{member.name}'"}
                     tar.extractall(tmp_path)
             except Exception as e:
                 return {"error": f"Failed to extract archive: {e}"}

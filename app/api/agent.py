@@ -13,14 +13,17 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 import secrets
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 
 import aiosqlite
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
+from app.config import get_settings
 from app.database import get_db
 from app.dependencies import CurrentNode, DbDep, hash_agent_token
 from app import totp
@@ -287,6 +290,42 @@ class CheckinRequest(BaseModel):
     unraid_vms: list[UnraidVMItem] = []
 
     has_tray: bool = False
+
+
+# Matches the release-artifact naming convention in agent/build.sh and the
+# StaticFiles mount used by execUpdateAgent's download in
+# internal/commands/commands.go — e.g. "pktnode-agent-linux-amd64",
+# "pktnode-tray-windows-amd64.exe".
+_RELEASE_ASSET_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,127}$")
+
+
+@router.get("/agents/release-checksum")
+async def agent_release_checksum(asset: str, node: CurrentNode) -> dict:
+    """
+    SHA-256 of a release binary in agent-releases/, gated behind the same
+    per-node bearer token as every other agent-facing endpoint. The agent
+    calls this before swapping a downloaded update binary into place
+    (execUpdateAgent/updateTrayBestEffort in internal/commands/commands.go)
+    so a tampered artifact on the unauthenticated static download mount
+    (see app/main.py) can't be installed without also forging a response
+    on this authenticated channel.
+    """
+    if not _RELEASE_ASSET_RE.match(asset):
+        raise HTTPException(status_code=400, detail="Invalid asset name")
+    releases_root = Path(get_settings().install_dir) / "agent-releases"
+    # `asset` is only ever used in a string equality comparison below, never
+    # to construct a filesystem path — the file that actually gets read
+    # comes entirely from the server's own directory listing
+    # (releases_root.iterdir()), so no path is derived from caller-supplied
+    # input at any point.
+    try:
+        match = next((p for p in releases_root.iterdir() if p.is_file() and p.name == asset), None)
+    except OSError:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    if match is None:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    digest = hashlib.sha256(match.read_bytes()).hexdigest()
+    return {"asset": asset, "sha256": digest}
 
 
 @router.post("/checkin")

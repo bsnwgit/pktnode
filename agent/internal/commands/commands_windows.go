@@ -16,6 +16,19 @@ func runPowerShell(ctx context.Context, script string) (string, error) {
 	return runCmd(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", script)
 }
 
+// runPowerShellWithArgs is for scripts that need to reference caller-supplied
+// values (e.g. a service name) — those must never be interpolated into the
+// script string itself (that's PowerShell command injection: a value like
+// `x' ; Invoke-WebRequest evil ; '` breaks out of a quoted literal). Passing
+// them as trailing argv elements after -Command instead binds them to
+// PowerShell's own $args array, which powershell.exe receives as separate,
+// un-reinterpreted process arguments (exec.CommandContext never invokes a
+// shell), so no value can escape its position no matter what it contains.
+func runPowerShellWithArgs(ctx context.Context, script string, args ...string) (string, error) {
+	fullArgs := append([]string{"-NoProfile", "-NonInteractive", "-Command", script}, args...)
+	return runCmd(ctx, "powershell", fullArgs...)
+}
+
 func runCmd(ctx context.Context, name string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Cancel = func() error {
@@ -37,7 +50,7 @@ func runCmd(ctx context.Context, name string, args ...string) (string, error) {
 func execRestartService(service string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	return runPowerShell(ctx, fmt.Sprintf("Restart-Service -Name '%s' -Force", service))
+	return runPowerShellWithArgs(ctx, "Restart-Service -Name $args[0] -Force", service)
 }
 
 func execKillProcess(pid int) (string, error) {
