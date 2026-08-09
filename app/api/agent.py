@@ -313,18 +313,18 @@ async def agent_release_checksum(asset: str, node: CurrentNode) -> dict:
     if not _RELEASE_ASSET_RE.match(asset):
         raise HTTPException(status_code=400, detail="Invalid asset name")
     releases_root = Path(get_settings().install_dir) / "agent-releases"
+    # `asset` is only ever used in a string equality comparison below, never
+    # to construct a filesystem path — the file that actually gets read
+    # comes entirely from the server's own directory listing
+    # (releases_root.iterdir()), so no path is derived from caller-supplied
+    # input at any point.
     try:
-        # Resolve `asset` against the directory's actual contents rather than
-        # constructing a path from it directly — checking membership in a
-        # server-enumerated set (not deriving a filesystem path from
-        # caller-controlled input at all) is the strongest form of
-        # sanitization available here, independent of the regex above.
-        valid_assets = {p.name for p in releases_root.iterdir() if p.is_file()}
+        match = next((p for p in releases_root.iterdir() if p.is_file() and p.name == asset), None)
     except OSError:
         raise HTTPException(status_code=404, detail="Asset not found")
-    if asset not in valid_assets:
+    if match is None:
         raise HTTPException(status_code=404, detail="Asset not found")
-    digest = hashlib.sha256((releases_root / asset).read_bytes()).hexdigest()
+    digest = hashlib.sha256(match.read_bytes()).hexdigest()
     return {"asset": asset, "sha256": digest}
 
 
