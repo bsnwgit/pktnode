@@ -165,7 +165,8 @@ if _frontend_dist.exists():
         # pktHub suite-token bootstrap — set sso cookies so React logs in automatically
         _cfg = settings
         _suite_tk = request.headers.get("x-suite-token", "")
-        if _suite_tk and _cfg.suite_token and _suite_tk == _cfg.suite_token:
+        import secrets as _secrets
+        if _suite_tk and _cfg.suite_token and _secrets.compare_digest(_suite_tk, _cfg.suite_token):
             from datetime import datetime, timedelta, timezone
             from jose import jwt as _jose_jwt
             from app.dependencies import _SUITE_ROLE_MAP

@@ -574,7 +574,11 @@ function PktHubTokenDisplay() {
     if (!confirm('Generate a new token?\n\nThe current token will stop working immediately.\nYou will need to re-register this app in pktHub with the new token.')) return
     setRegen(true)
     try {
-      const r = await fetch('/api/suite/token/regenerate', { method: 'POST', credentials: 'include' })
+      const r = await fetch('/api/suite/regenerate', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { Authorization: `Bearer ${getToken() ?? ''}` },
+      })
       const d = await r.json()
       if (d.suite_token) { setToken(d.suite_token); setRevealed(true) }
     } catch {}
@@ -582,7 +586,10 @@ function PktHubTokenDisplay() {
   }
 
   useEffect(() => {
-    fetch('/api/suite/token', { credentials: 'include' })
+    fetch('/api/suite/token', {
+      credentials: 'include',
+      headers: { Authorization: `Bearer ${getToken() ?? ''}` },
+    })
       .then(r => r.json())
       .then(d => { setToken(d.suite_token || ''); setLoaded(true) })
       .catch(() => setLoaded(true))

@@ -209,7 +209,7 @@ func checkinOnce(client *apiclient.Client, cfg *config.Config, fullInventory boo
 	inventoryChanged := false
 	for _, cmd := range resp.Commands {
 		log.Printf("executing queued command #%d (%s)", cmd.ID, cmd.CommandType)
-		result := commands.Execute(cmd.CommandType, cmd.Payload, client.ServerURL)
+		result := commands.Execute(cmd.CommandType, cmd.Payload, client.ServerURL, client.Token)
 		if err := client.ReportCommandResult(cmd.ID, apiclient.CommandResult{
 			Status: result.Status, ExitCode: result.ExitCode, Result: result.Output,
 		}); err != nil {
