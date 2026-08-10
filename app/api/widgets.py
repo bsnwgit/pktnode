@@ -7,6 +7,7 @@ Options:  GET /api/widgets/options/* → JSON [{value,label}] for dynamic param 
 """
 from __future__ import annotations
 
+import html
 import secrets
 
 import aiosqlite
@@ -108,7 +109,7 @@ def _status_badge(status: str) -> str:
         return '<span class="badge br">{}</span>'.format(s.upper())
     if s == "pending":
         return '<span class="badge by">PENDING</span>'
-    return f'<span class="badge bn">{(status or "UNKNOWN").upper()}</span>'
+    return f'<span class="badge bn">{html.escape((status or "UNKNOWN").upper())}</span>'
 
 
 # ── Node Status widget ────────────────────────────────────────────────────────
@@ -134,9 +135,9 @@ async def widget_node_status():
 
     if rows:
         trs = "".join(
-            f"<tr><td>{r['display_name'] or r['hostname']}</td>"
+            f"<tr><td>{html.escape(str(r['display_name'] or r['hostname']))}</td>"
             f"<td>{_status_badge(r['status'])}</td>"
-            f"<td>{str(r['last_checkin_at'] or '')[:19].replace('T',' ')}</td></tr>"
+            f"<td>{html.escape(str(r['last_checkin_at'] or '')[:19].replace('T',' '))}</td></tr>"
             for r in rows
         )
         body = (
@@ -182,7 +183,7 @@ async def widget_node_metrics(node_id: int | None = None):
 
     if metrics:
         body = (
-            f'<div style="margin-bottom:8px;color:#64748b;font-size:11px">{node_name}</div>'
+            f'<div style="margin-bottom:8px;color:#64748b;font-size:11px">{html.escape(str(node_name))}</div>'
             '<div class="tile-row">'
             f'<div class="tile"><div class="tile-label">CPU</div><div class="tile-value">{fmt(metrics.get("cpu_pct"))}</div></div>'
             f'<div class="tile"><div class="tile-label">Memory</div><div class="tile-value">{fmt(metrics.get("mem_pct"))}</div></div>'
@@ -190,7 +191,7 @@ async def widget_node_metrics(node_id: int | None = None):
             "</div>"
         )
     else:
-        body = f'<div class="empty">No metrics for {node_name}</div>'
+        body = f'<div class="empty">No metrics for {html.escape(str(node_name))}</div>'
     return HTMLResponse(_page("Node Metrics", body))
 
 
@@ -214,9 +215,10 @@ async def widget_active_alerts():
 
     if rows:
         trs = "".join(
-            f'<tr><td><span class="badge {"br" if r["severity"] in ("critical","high") else "by"}">{r["severity"].upper()}</span></td>'
-            f"<td>{r.get('display_name') or r.get('hostname') or ''}</td><td>{r['message']}</td>"
-            f"<td>{str(r['fired_at'])[:19].replace('T',' ')}</td></tr>"
+            f'<tr><td><span class="badge {"br" if r["severity"] in ("critical","high") else "by"}">{html.escape(str(r["severity"]).upper())}</span></td>'
+            f"<td>{html.escape(str(r.get('display_name') or r.get('hostname') or ''))}</td>"
+            f"<td>{html.escape(str(r['message']))}</td>"
+            f"<td>{html.escape(str(r['fired_at'])[:19].replace('T',' '))}</td></tr>"
             for r in rows
         )
         body = (
