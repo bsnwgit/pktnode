@@ -22,6 +22,15 @@ Prompts for install directory and port (default `8764`), handles the venv, `conf
 6. **Set up backups** and confirm a manual run succeeds.
 7. **Create accounts** for your team.
 
+## Finding your way around Settings
+
+Settings has a section bar above its tab bar with two buttons:
+
+- **Common** — General, Security (Users, Auth, Suite Integration, AI Assistant, SSL/TLS), Data (Storage, Backups), Notifications, User Keys, System. Identical across every pkt* app.
+- **pktNode** — Groups. (Enrollment, the other pktNode-specific area, is a top-level nav item, not a Settings tab.)
+
+Only the selected section's tabs appear in the row below. Deep links to a tab select the right section automatically.
+
 ## Users & roles
 
 Admin and analyst can queue commands, open Live Terminal and File Transfer, and bulk-manage nodes; only admins reach Enrollment, Settings, Override Code, and decommission/delete actions. Manage accounts at Settings → Security → Users.

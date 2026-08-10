@@ -613,7 +613,18 @@ tables and is managed from the Settings page — not this file. The AI assistant
 is scoped strictly to pktNode's own domain (managed node inventory, resource
 usage, alerts, remote actions) — off-topic questions, requests to discuss
 other pktApp suite tools, and prompt-injection/override attempts are refused
-server-side before ever reaching the AI provider.
+server-side before ever reaching the AI provider. Each provider call is
+allowed up to **180 seconds** to answer — headroom for a local model on
+modest hardware working through a complex question, which a shorter ceiling
+turned into spurious failures; cloud providers rarely approach it.
+
+**Settings layout.** The page is split into two sections, chosen from a
+section bar above the tab bar: **Common** (General · Security · Data ·
+Notifications · User Keys · System — identical across every pkt* app) and
+**pktNode** (Groups). Only the selected section's tabs are shown; deep
+links like `/settings?tab=groups` select the section automatically.
+Enrollment, pktNode's other app-specific area, is a top-level nav item
+rather than a Settings tab.
 
 **Agent check-in interval** (Settings → General, default 60s, 15–3600s
 range) controls how often every node calls home — it's also the floor on
