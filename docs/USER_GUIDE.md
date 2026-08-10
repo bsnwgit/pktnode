@@ -10,6 +10,8 @@ Log in with your username and password, or Okta SSO if configured.
 
 **Dashboard**, **Nodes**, **Enrollment** (admin only), **Alerts**, **Logs**. **Settings** appears only for admins.
 
+Settings has a section bar at the top with **Common** (General, Security, Data, Notifications, User Keys, System — the same in every pkt* app) and **pktNode** (Groups). The tab row below shows one section at a time, so switch sections if a tab looks missing.
+
 ## Dashboard
 
 Clickable tiles for total/online/offline/stale/pending node counts and active alert count — each jumps to the corresponding filtered view — plus a table of the 10 most recently checked-in nodes.
