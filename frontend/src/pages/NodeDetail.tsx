@@ -10,6 +10,7 @@ import '@xterm/xterm/css/xterm.css'
 import { api, terminalWsUrl, filesWsUrl, NodeDetail as NodeDetailType, CommandRecord, GroupInfo, SpeedtestResult } from '../api/client'
 import { useAuth } from '../store/auth'
 import HelpButton from '../components/HelpButton'
+import { axisProps, tooltipProps, gridProps, glow, INSTRUMENT } from '../components/instrument'
 
 const PAGE_SIZE_OPTIONS = [25, 50, 75, 100]
 
@@ -184,27 +185,27 @@ function HistoryChart({
   return (
     <ResponsiveContainer width="100%" height={220}>
       <LineChart data={data} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#211c14" vertical={false} />
+        <CartesianGrid {...gridProps} />
         <XAxis
           dataKey="ts"
           type="number"
           scale="time"
           domain={['dataMin', 'dataMax']}
           tickFormatter={v => new Date(v).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-          tick={{ fontSize: 10, fill: '#dcd6c9' }}
+          tick={axisProps.tick}
           axisLine={false}
           tickLine={false}
         />
         <YAxis
           domain={yDomain}
           tickFormatter={v => yFormatter(v)}
-          tick={{ fontSize: 10, fill: '#dcd6c9' }}
+          tick={axisProps.tick}
           axisLine={false}
           tickLine={false}
           width={48}
         />
         <Tooltip
-          contentStyle={{ background: '#0d1219', border: '1px solid #2a2418', borderRadius: 8, fontSize: 11 }}
+          contentStyle={tooltipProps.contentStyle}
           labelFormatter={v => new Date(v as number).toLocaleString()}
           formatter={(val: number, name: string) => [val === null || val === undefined ? '—' : yFormatter(val), name]}
         />
