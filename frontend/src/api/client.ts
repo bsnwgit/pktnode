@@ -201,8 +201,12 @@ export const api = {
     const qs = files && files.length ? `?files=${encodeURIComponent(files.join(','))}` : ''
     return request<Record<string, string>>(`/system/backup/restore/${encodeURIComponent(name)}${qs}`, { method: 'POST' })
   },
-  exportConfig: async (): Promise<{ blob: Blob; filename: string }> => {
-    const res = await fetch('/api/system/export', { headers: authHeaders() })
+  exportConfig: async (password: string): Promise<{ blob: Blob; filename: string }> => {
+    const res = await fetch('/api/system/export', {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password }),
+    })
     if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
     const blob = await res.blob()
     const cd = res.headers.get('Content-Disposition') ?? ''
