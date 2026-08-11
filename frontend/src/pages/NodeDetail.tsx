@@ -10,7 +10,7 @@ import '@xterm/xterm/css/xterm.css'
 import { api, terminalWsUrl, filesWsUrl, NodeDetail as NodeDetailType, CommandRecord, GroupInfo, SpeedtestResult } from '../api/client'
 import { useAuth } from '../store/auth'
 import HelpButton from '../components/HelpButton'
-import { axisProps, tooltipProps, gridProps, glow, INSTRUMENT } from '../components/instrument'
+import { axisProps, tooltipProps, gridProps, glow, INSTRUMENT, LinePulseGradient } from '../components/instrument'
 
 const PAGE_SIZE_OPTIONS = [25, 50, 75, 100]
 
@@ -185,6 +185,11 @@ function HistoryChart({
   return (
     <ResponsiveContainer width="100%" height={220}>
       <LineChart data={data} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+        <defs>
+          {series.map(s2 => (
+            <LinePulseGradient key={s2.key} id={`pulse-${s2.key}`} color={s2.color} />
+          ))}
+        </defs>
         <CartesianGrid {...gridProps} />
         <XAxis
           dataKey="ts"
@@ -211,7 +216,9 @@ function HistoryChart({
         />
         <Legend iconSize={8} wrapperStyle={{ fontSize: 11, color: '#a9a294' }} />
         {series.map(s => (
-          <Line key={s.key} type="monotone" dataKey={s.key} name={s.name} stroke={s.color} dot={false} strokeWidth={2} connectNulls={false} />
+          <Line key={s.key} type="monotone" dataKey={s.key} name={s.name}
+                stroke={`url(#pulse-${s.key})`} dot={false} strokeWidth={2} connectNulls={false}
+                style={glow(s.color, 4)} />
         ))}
       </LineChart>
     </ResponsiveContainer>
