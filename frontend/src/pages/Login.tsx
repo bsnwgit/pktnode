@@ -1,6 +1,7 @@
 import { useState, useEffect, FormEvent } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../store/auth'
+import { BrandLockup } from '../components/Brand'
 
 const SSO_ERROR_MESSAGES: Record<string, string> = {
   missing_params:             'SSO login failed: missing code or state.',
@@ -68,15 +69,15 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-950 flex items-center justify-center">
+    <div className="relative z-10 min-h-screen flex items-center justify-center">
       <div className="w-full max-w-sm">
         {/* Logo */}
         <div className="flex flex-col items-center gap-2 mb-8">
-          <img src="/icon-128.png" alt="" className="w-14 h-14 rounded-xl" />
+          <BrandLockup markSize={52} />
           <span className="text-xl font-semibold tracking-wide text-white">pktNode</span>
         </div>
 
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-8 space-y-5">
+        <div className="f-panel f-tick-on p-8 space-y-6">
 
           {/* SAML SSO button — shown when configured */}
           {samlEnabled && (
