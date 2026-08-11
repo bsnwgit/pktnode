@@ -235,7 +235,7 @@ function MetricsChart({ history }: { history: NodeDetailType['metrics_history'] 
       yFormatter={v => `${v}%`}
       emptyLabel="No metrics history yet"
       series={[
-        { key: 'cpu_pct', name: 'CPU', color: '#38bdf8' },
+        { key: 'cpu_pct', name: 'CPU', color: '#8ad8ea' },
         { key: 'mem_pct', name: 'Memory', color: '#b0a0dd' },
         { key: 'disk_pct', name: 'Disk', color: '#f5a072' },
       ]}
@@ -259,7 +259,7 @@ function NetworkChart({ history }: { history: NodeDetailType['network_history'] 
       yFormatter={v => `${v.toFixed(1)} Mbps`}
       emptyLabel="No network history yet"
       series={[
-        { key: 'sent_mbps', name: 'Upload', color: '#38bdf8' },
+        { key: 'sent_mbps', name: 'Upload', color: '#8ad8ea' },
         { key: 'recv_mbps', name: 'Download', color: '#9aeabd' },
       ]}
     />
