@@ -167,9 +167,8 @@ export default function Layout({ children, chromeless = false }: { children: Rea
     <AutoRefreshProvider>
     <div className="relative z-10 flex h-screen text-white overflow-hidden">
       <aside className="w-[210px] flex-shrink-0 border-r border-gray-800 flex flex-col" style={{ background: 'linear-gradient(180deg, rgba(216,180,110,.025), transparent 40%)' }}>
-        <div className="flex items-center gap-3 px-3 py-3 border-b border-gray-800">
+        <div className="flex items-center px-5 py-4 border-b border-gray-800">
           <BrandLockup markSize={30} />
-          <span className="text-xl font-bold tracking-wide text-white">pktNode</span>
         </div>
 
         <nav className="flex-1 px-2 py-4 space-y-0.5">
