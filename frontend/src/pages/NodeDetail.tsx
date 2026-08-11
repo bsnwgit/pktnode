@@ -10,6 +10,7 @@ import '@xterm/xterm/css/xterm.css'
 import { api, terminalWsUrl, filesWsUrl, NodeDetail as NodeDetailType, CommandRecord, GroupInfo, SpeedtestResult } from '../api/client'
 import { useAuth } from '../store/auth'
 import HelpButton from '../components/HelpButton'
+import { axisProps, tooltipProps, gridProps, glow, INSTRUMENT, LinePulseGradient } from '../components/instrument'
 
 const PAGE_SIZE_OPTIONS = [25, 50, 75, 100]
 
@@ -184,33 +185,40 @@ function HistoryChart({
   return (
     <ResponsiveContainer width="100%" height={220}>
       <LineChart data={data} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" vertical={false} />
+        <defs>
+          {series.map(s2 => (
+            <LinePulseGradient key={s2.key} id={`pulse-${s2.key}`} color={s2.color} />
+          ))}
+        </defs>
+        <CartesianGrid {...gridProps} />
         <XAxis
           dataKey="ts"
           type="number"
           scale="time"
           domain={['dataMin', 'dataMax']}
           tickFormatter={v => new Date(v).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-          tick={{ fontSize: 10, fill: '#d1d5db' }}
+          tick={axisProps.tick}
           axisLine={false}
           tickLine={false}
         />
         <YAxis
           domain={yDomain}
           tickFormatter={v => yFormatter(v)}
-          tick={{ fontSize: 10, fill: '#d1d5db' }}
+          tick={axisProps.tick}
           axisLine={false}
           tickLine={false}
           width={48}
         />
         <Tooltip
-          contentStyle={{ background: '#111827', border: '1px solid #374151', borderRadius: 8, fontSize: 11 }}
+          contentStyle={tooltipProps.contentStyle}
           labelFormatter={v => new Date(v as number).toLocaleString()}
           formatter={(val: number, name: string) => [val === null || val === undefined ? '—' : yFormatter(val), name]}
         />
-        <Legend iconSize={8} wrapperStyle={{ fontSize: 11, color: '#9ca3af' }} />
+        <Legend iconSize={8} wrapperStyle={{ fontSize: 11, color: '#a9a294' }} />
         {series.map(s => (
-          <Line key={s.key} type="monotone" dataKey={s.key} name={s.name} stroke={s.color} dot={false} strokeWidth={2} connectNulls={false} />
+          <Line key={s.key} type="monotone" dataKey={s.key} name={s.name}
+                stroke={`url(#pulse-${s.key})`} dot={false} strokeWidth={2} connectNulls={false}
+                style={glow(s.color, 4)} />
         ))}
       </LineChart>
     </ResponsiveContainer>
@@ -235,9 +243,9 @@ function MetricsChart({ history }: { history: NodeDetailType['metrics_history'] 
       yFormatter={v => `${v}%`}
       emptyLabel="No metrics history yet"
       series={[
-        { key: 'cpu_pct', name: 'CPU', color: '#38bdf8' },
-        { key: 'mem_pct', name: 'Memory', color: '#a78bfa' },
-        { key: 'disk_pct', name: 'Disk', color: '#fb923c' },
+        { key: 'cpu_pct', name: 'CPU', color: '#8ad8ea' },
+        { key: 'mem_pct', name: 'Memory', color: '#b0a0dd' },
+        { key: 'disk_pct', name: 'Disk', color: '#f5a072' },
       ]}
     />
   )
@@ -259,8 +267,8 @@ function NetworkChart({ history }: { history: NodeDetailType['network_history'] 
       yFormatter={v => `${v.toFixed(1)} Mbps`}
       emptyLabel="No network history yet"
       series={[
-        { key: 'sent_mbps', name: 'Upload', color: '#38bdf8' },
-        { key: 'recv_mbps', name: 'Download', color: '#34d399' },
+        { key: 'sent_mbps', name: 'Upload', color: '#8ad8ea' },
+        { key: 'recv_mbps', name: 'Download', color: '#9aeabd' },
       ]}
     />
   )
@@ -540,7 +548,7 @@ function LiveTerminalModal({ nodeId, hostname, onClose }: { nodeId: number; host
       cursorBlink: true,
       fontSize: 13,
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-      theme: { background: '#111827' },
+      theme: { background: '#0d1219' },
     })
     const fit = new FitAddon()
     term.loadAddon(fit)
@@ -609,7 +617,7 @@ function LiveTerminalModal({ nodeId, hostname, onClose }: { nodeId: number; host
           </div>
           <button onClick={onClose} className="text-sm text-white hover:text-white transition-colors">Close</button>
         </div>
-        <div ref={containerRef} className="flex-1 rounded-lg overflow-hidden bg-[#111827] p-2" />
+        <div ref={containerRef} className="flex-1 rounded-lg overflow-hidden bg-[#0d1219] p-2" />
       </div>
     </div>
   )
