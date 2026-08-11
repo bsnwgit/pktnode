@@ -640,7 +640,7 @@ function PktHubTokenDisplay() {
                   if (ok) { setCopied(true); setTimeout(() => setCopied(false), 2000) }
                 }}
                 className="px-3 py-1.5 text-xs font-medium text-white rounded-lg whitespace-nowrap transition-colors"
-                style={{ background: copied ? '#16a34a' : '#2563eb' }}
+                style={{ background: copied ? '#52cc8e' : '#63c3d8' }}
               >
                 {copied ? '\u2713 Copied' : 'Copy Token'}
               </button>
