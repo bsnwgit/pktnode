@@ -26,7 +26,6 @@ Prompts for install directory and port (default `8764`), handles the venv, `conf
 
 Settings has a section bar above its tab bar with two buttons:
 
-- **Common** — General, Security (Users, Auth, Suite Integration, AI Assistant, SSL/TLS), Data (Storage, Backups), Notifications, User Keys, System. Identical across every pkt* app.
 - **pktNode** — Groups. (Enrollment, the other pktNode-specific area, is a top-level nav item, not a Settings tab.)
 
 Only the selected section's tabs appear in the row below. Deep links to a tab select the right section automatically.

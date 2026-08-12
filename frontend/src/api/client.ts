@@ -148,8 +148,6 @@ export const api = {
     request('/users/me/password', { method: 'PATCH', body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }) }),
 
   // ── Settings ──────────────────────────────────────────────────────────────
-  aiChat: (question: string, context: Record<string, unknown> = {}) =>
-    request<{ answer: string; provider?: string; tokens_used: number }>('/ai/chat', { method: 'POST', body: JSON.stringify({ question, context }) }),
 
   getSettings: () => request<Record<string, unknown>>('/settings/'),
   updateSetting: (key: string, value: unknown) =>
