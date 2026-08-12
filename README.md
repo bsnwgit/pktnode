@@ -608,15 +608,9 @@ See `config.example.yaml` — covers server bind host/port, install_dir,
 JWT secret, CORS origins, node liveness thresholds
 (`offline_after_sec`/`stale_after_sec`), logging, and SSL cert paths.
 Everything else (notifications, alert thresholds, SSL toggle, suite
-integration token, AI assistant provider config, backup schedule, enrollment tokens,
+integration token, backup schedule, enrollment tokens,
 agent check-in interval) lives in the SQLite `settings`/`enrollment_tokens`
-tables and is managed from the Settings page — not this file. The AI assistant
-is scoped strictly to pktNode's own domain (managed node inventory, resource
-usage, alerts, remote actions) — off-topic questions, requests to discuss
-other pktApp suite tools, and prompt-injection/override attempts are refused
-server-side before ever reaching the AI provider. Each provider call is
-allowed up to **180 seconds** to answer — headroom for a local model on
-modest hardware working through a complex question, which a shorter ceiling
+tables and is managed from the Settings page — not this file.
 turned into spurious failures; cloud providers rarely approach it.
 
 **Settings layout.** The page is split into two sections, chosen from a
@@ -820,12 +814,6 @@ because it looks like a backup either way.
 - **New user has no admin account**: `PKTNODE_ADMIN_PASSWORD` must be set
   on first boot when the `users` table is empty; `install.sh` handles this
   automatically.
-- **AI Assistant chat said "Not authenticated" even with a provider
-  configured (fixed 2026-08-03)**: the chat request wasn't sending the
-  session's auth token, so it failed pktNode's own login check before ever
-  reaching the configured AI provider — unrelated to Ollama/Anthropic/OpenAI
-  settings. Also fixed: connection/timeout failures reaching a provider used
-  to show a blank error message; they now name the provider and its base URL.
 - **File Transfer says "read-only file system" uploading to a macOS
   node**: expected behavior, not a bug — see
   [File Transfer](#file-transfer) above. It means the target is on the
