@@ -90,6 +90,16 @@ The server's own application log, browsable in-app.
 
 Any IP shown in the app is clickable, opening a lookup using your own per-user API keys (Settings → User Keys).
 
+## The assistant
+
+If your administrator has set it up, a launcher sits in the bottom corner of every page. Click it to ask questions in a chat panel. The panel comes from the resonance server, so what it can help with depends on how your administrator configured it there.
+
+Depending on what your administrator has allowed for your role, it can look at this install's hosts, their disks, the installed-software inventory, alerts and logs — never anything your own account could not already open. It may also be able to **act**: acknowledge an alert, acknowledge all of them, or switch an alert rule on or off. It will always say exactly what it is about to do and wait for you to say yes.
+
+It can never see what is running on a machine, send a command to an agent, run a speed test, or add, change or delete a node.
+
+If the launcher never appears, either your role is set to *No access* or the assistant could not load. Your administrator can see both under Settings → Resonance.
+
 ## Getting help in the app
 
 Click **Documentation** in the sidebar (just above your account info) to open this guide and the Administrator Guide as in-app tabs, so you don't need the repo checked out to read them.

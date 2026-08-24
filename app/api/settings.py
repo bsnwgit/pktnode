@@ -111,6 +111,43 @@ DEFAULTS: dict[str, Any] = {
 
     # Set by pktHub on register/deregister via /api/suite/settings-lock — not user-editable.
     "hub_settings_managed": False,
+
+    # Resonance embed — the shared assistant surface every pkt* app mounts.
+    # base_url must match the address enrolled on the resonance side exactly
+    # (scheme, host, port; port blank behind a reverse proxy) because embed.js
+    # derives its own origin from it. Enabled is deliberately separate from a
+    # passing Test Connection: testing a key must never ship a widget to users.
+    # Every connection field ships blank — an install has to be pointed at its
+    # own resonance server before anything mounts.
+    "resonance_enabled": False,
+    "resonance_base_url": "",
+    # Public origin of THIS app, as a browser sees it — the string that has to be
+    # on the resonance key. Blank means "work it out from the request", which is
+    # right for a direct install and wrong behind a reverse proxy: the app then
+    # sees the internal scheme, host and port, not the address users type.
+    "resonance_origin": "",
+    # CA bundle for the server-to-server call to resonance. Blank uses httpx's
+    # bundled certifi roots, which do NOT include anything an internal CA signed
+    # — a certificate every browser trusts is still untrusted here. Point this at
+    # the system store (/etc/ssl/certs/ca-certificates.crt on Debian/Ubuntu) when
+    # resonance uses an internal CA.
+    "resonance_ca_bundle": "",
+    "resonance_key": "",              # <eid>.<secret> — encrypted at rest, masked in responses
+    # What each local role may do with the assistant: "none" hides the launcher
+    # entirely, anything above it lets that role open it. The stored shape keeps
+    # "write" as a third level, matching the app that also publishes a data
+    # surface for the assistant to act through, so adding one here later needs
+    # no migration — but nothing in this app reads it yet, so the panel offers
+    # only the two levels that do something.
+    "resonance_role_levels": {"admin": "read", "analyst": "read", "viewer": "read"},
+    "resonance_style": "bubble",      # bubble | inline
+    "resonance_target": "",           # required when style is inline: id of an existing element
+    "resonance_label": "",
+    "resonance_side": "right",        # right | left
+    "resonance_width": "",
+    "resonance_height": "",
+    "resonance_open": False,
+    "resonance_exclude_paths": ["/login"],   # excluding a page discards any running conversation
 }
 
 
@@ -120,7 +157,45 @@ _MASK = "••••••••"
 _SECRET_KEYS = frozenset({
     "notify_email_password",
     "notify_pagerduty_integration_key", "okta_saml_sp_key", "notify_tracecat_api_token",
+    "resonance_key",
 })
+
+
+# Credentials to another system, held the way the suite token and user API keys
+# already are: Fernet at rest, not just masked on the way out. Masking alone
+# protects the API response; it leaves the value readable to anything that can
+# open the SQLite file.
+_ENCRYPTED_KEYS = frozenset({
+    "resonance_key",
+})
+
+
+def _store_value(key: str, value: Any) -> Any:
+    """Encrypt on the way into the settings table, for keys that warrant it."""
+    if key in _ENCRYPTED_KEYS and isinstance(value, str) and value:
+        from app.crypto import encrypt_str
+        return encrypt_str(value)
+    return value
+
+
+async def read_secret(db: aiosqlite.Connection, key: str) -> str:
+    """Read and decrypt one _ENCRYPTED_KEYS setting for internal use.
+
+    Returns "" when unset or undecryptable — a rotated credential key should
+    read as "not configured" rather than raise on every request.
+    """
+    async with db.execute("SELECT value FROM settings WHERE key = ?", (key,)) as cur:
+        row = await cur.fetchone()
+    if not row or not row[0]:
+        return ""
+    try:
+        stored = json.loads(row[0])
+    except (json.JSONDecodeError, TypeError, ValueError):
+        stored = row[0]
+    if not isinstance(stored, str) or not stored:
+        return ""
+    from app.crypto import decrypt_str
+    return decrypt_str(stored)
 
 
 async def _ensure_defaults(db: aiosqlite.Connection) -> None:
@@ -162,7 +237,12 @@ async def get_setting(key: str, _: AdminUser, db: aiosqlite.Connection = Depends
         row = await cur.fetchone()
     if not row:
         raise HTTPException(status_code=404, detail=f"Setting '{key}' not found")
-    return {key: _safe_loads(row[0])}
+    value = _safe_loads(row[0])
+    # Same masking the collection endpoint applies. Without it this route
+    # hands any authenticated caller the stored value for a secret by name.
+    if key in _SECRET_KEYS and value:
+        value = _MASK
+    return {key: value}
 
 
 class SettingUpdate(BaseModel):
@@ -192,7 +272,7 @@ async def update_setting(
     await db.execute(
         "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, datetime('now')) "
         "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
-        (key, json.dumps(value)),
+        (key, json.dumps(_store_value(key, value))),
     )
     await db.commit()
 
@@ -219,7 +299,7 @@ async def bulk_update(
         await db.execute(
             "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, datetime('now')) "
             "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
-            (key, json.dumps(value)),
+            (key, json.dumps(_store_value(key, value))),
         )
     await db.commit()
     written = [k for k in updates if k not in skipped]
