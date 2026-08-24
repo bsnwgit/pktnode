@@ -100,6 +100,31 @@ export function filesWsUrl(nodeId: number): string {
 }
 
 export const api = {
+
+  // ── Resonance ─────────────────────────────────────────────────────────────
+
+  resonanceTest: (base_url?: string, key?: string) =>
+    request<{
+      ok: boolean
+      error?: string
+      detail?: string
+      origin: string
+      detected_origin?: string
+      user_id_sent?: string
+      parts?: string[]
+      cap?: Record<string, unknown>
+      expires_in?: number
+      code_expires_in?: number
+    }>('/resonance/test', { method: 'POST', body: JSON.stringify({ base_url, key }) }),
+
+  resonanceStatus: () =>
+    request<{
+      module_version: string
+      origin: string
+      detected_origin: string
+      breaker: { open: boolean; failures: number; retry_in_seconds: number; last_error: string }
+      load_failures: { days: number; users: number; events: number; by_reason: Record<string, number> }
+    }>('/resonance/status'),
   logForwardTest: (host: string, port: number, protocol: string) =>
     request<{ ok: boolean; sent: number; errors: number; last_error: string; target: string }>(
       '/system/log-forward/test', { method: 'POST', body: JSON.stringify({ host, port, protocol }) }),

@@ -177,6 +177,38 @@ Configure schedule and rotation at Settings → Data → Backups. Each snapshot 
 - A full bundle can also be exported/imported as a `.tar.gz`, with the same per-file selection on upload.
 - Restoring requires a service restart to pick up `config.yaml` changes. Existing agents keep working against a restored server unchanged, since their bearer tokens live in the restored DB.
 
+## Resonance (embedded assistant)
+
+Settings → Resonance (admin only). Adds an assistant launcher to the bottom corner of every page. The assistant itself runs on the resonance server; pktNode only decides who may open it.
+
+**Setting it up.** Paste the **interface server** address — not resonance's admin portal, which answers on a different address and serves `embed.js` too, so it looks right until the session call returns "not found" — then the key you were issued. Choose which roles may use it, press **Test Connection**, and only then switch **Enabled** on. Test Connection works whether or not the feature is enabled; always prove a key before putting the widget in front of users. Every field ships blank, so a fresh install shows nothing until it is pointed at a resonance server of its own.
+
+Two things have to line up on the resonance side, and both fail silently when they don't:
+
+- **This install's origin** must be on the key's allow-list. The exact string is shown ready to copy on the same page. Behind a reverse proxy, fill in **pktNode's own address** yourself — what the app detects is the internal address, not the one users type.
+- **Speakers Name** must be on for the key. Without it resonance records nothing, so there is no trace of who asked what.
+
+**Reachability, twice over.**
+
+- Resonance must be reachable **from the browser**, over HTTPS, with a certificate those browsers already trust. An untrusted certificate produces an empty widget and nothing in the console to explain it.
+- pktNode also calls resonance **server to server**, so this host must resolve resonance's name and trust its certificate — the browser doing both is not enough. Python verifies against its own bundled roots rather than the system store, so a certificate signed by an internal CA is trusted by every browser on the network and still rejected here. Point **CA bundle** at the system store instead (`/etc/ssl/certs/ca-certificates.crt` on Debian and Ubuntu).
+
+**What it can reach.** The managed hosts and one in full, their filesystems, the installed-software inventory, the estate summary, alert rules and the alerts they have fired, and pktNode's own diagnostic log. Every call is made by pktNode's own page on the session of whoever is signed in, so it reaches only what that person could already open in the interface. Which operations exist is fixed in the code, not configurable per install — `/.well-known/resonance.json` lists exactly what is on offer, and needs no login to read because it contains names, not data.
+
+**What it can never reach**, at any role level: the running-process list, which is the most sensitive thing this application holds and answers no question an assistant should be asked; and any agent token, enrolment token or node override secret. Those columns are not selected, so they cannot arrive through a schema's `extra` either. Nothing the assistant can call queues a command to an agent, runs a speed test, enrols or deletes a node, or edits a group.
+
+Documentation is published separately at `GET /api/resonance/docs`, to a suite token or an admin session — the guides shipped with the running version, so pointing resonance at it keeps the assistant's knowledge in step with the installed release instead of describing last year's UI.
+
+**What each role can do.** Set per role. *No access* hides the launcher entirely. *Read only* lets the assistant look at the operations above. *Read and write* also lets it act — and adds exactly three things, no more: acknowledge one alert, acknowledge all of them, and switch an existing alert rule on or off. There is no delete of anything and no creating or editing of configuration. Resonance stops and reads the actual values back to the person before it runs any of them.
+
+**A level never exceeds the role.** Two checks have to agree: the level set here, and pktNode's own rule for the thing being done. Setting a level grants nobody a right they did not already have — it decides whether the assistant may use the rights they do.
+
+Where no role is set to *Read and write*, the write operations are withheld from the published grant altogether, so there is nothing at the resonance end that could be turned on. Every write the assistant performs is recorded in the application log with who asked for it.
+
+**Credentials.** pktNode never sends a login to resonance. It vouches for whoever is signed in and gets back a short-lived, single-use code the browser spends on opening the panel. The key is encrypted at rest and never reaches the browser.
+
+**If it never appears.** Diagnostics reports how many users could not load the widget in the last week; the usual causes are an ad blocker, a wrong server address, or resonance being unreachable. Repeated failures pause the integration for a few minutes rather than hammering resonance — the panel says so while it is paused, and a successful Test Connection clears it.
+
 ## Troubleshooting
 
 | Symptom | Check |
