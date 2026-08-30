@@ -240,7 +240,7 @@ export default function Enrollment() {
         {loading ? (
           <div className="flex items-center justify-center h-24 text-white text-sm">Loading…</div>
         ) : (
-          <table className="w-full text-sm">
+          <table className="f-tbl-cards w-full text-sm">
             <thead>
               <tr className="border-b border-gray-800">
                 <th className="px-5 py-3 text-left text-xs font-medium text-white">Label</th>
@@ -254,12 +254,12 @@ export default function Enrollment() {
             <tbody className="divide-y divide-gray-800/50">
               {tokens.filter(t => (tab === 'active' ? !t.revoked : t.revoked)).map(t => (
                 <tr key={t.id} className="hover:bg-gray-800/30 transition-colors">
-                  <td className="px-5 py-3 text-white">{t.label || <span className="text-white">(no label)</span>}</td>
-                  <td className="px-5 py-3 text-white text-xs">{t.use_count} use{t.use_count === 1 ? '' : 's'}{t.max_uses ? ` / ${t.max_uses} max` : ''}</td>
-                  <td className="px-5 py-3 text-white text-xs">{t.nodes_enrolled}</td>
-                  <td className="px-5 py-3 text-white text-xs">{t.expires_at ? new Date(t.expires_at).toLocaleDateString() : 'Never'}</td>
+                  <td data-label="Label" className="px-5 py-3 text-white">{t.label || <span className="text-white">(no label)</span>}</td>
+                  <td data-label="Uses" className="px-5 py-3 text-white text-xs">{t.use_count} use{t.use_count === 1 ? '' : 's'}{t.max_uses ? ` / ${t.max_uses} max` : ''}</td>
+                  <td data-label="Nodes enrolled" className="px-5 py-3 text-white text-xs">{t.nodes_enrolled}</td>
+                  <td data-label="Expires" className="px-5 py-3 text-white text-xs">{t.expires_at ? new Date(t.expires_at).toLocaleDateString() : 'Never'}</td>
                   {tab === 'revoked' && (
-                    <td className="px-5 py-3 text-white text-xs">{t.revoked_at ? new Date(t.revoked_at).toLocaleString() : '—'}</td>
+                    <td data-label="Revoked" className="px-5 py-3 text-white text-xs">{t.revoked_at ? new Date(t.revoked_at).toLocaleString() : '—'}</td>
                   )}
                   <td className="px-5 py-3 text-right space-x-3 whitespace-nowrap">
                     {!t.revoked && (
