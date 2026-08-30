@@ -631,7 +631,7 @@ export default function Alerts() {
           )}
 
           <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-            <table className="w-full text-sm">
+            <table className="f-tbl-cards w-full text-sm">
               <thead>
                 <tr className="border-b border-gray-800">
                   <th className="px-5 py-3 text-left text-xs font-medium text-white">Name</th>
@@ -644,12 +644,12 @@ export default function Alerts() {
               <tbody className="divide-y divide-gray-800/50">
                 {rules.map(r => (
                   <tr key={r.id} className="hover:bg-gray-800/30 transition-colors">
-                    <td className="px-5 py-3 text-white font-medium">{r.name}</td>
-                    <td className="px-5 py-3 text-white text-xs">{RULE_TYPES.find(rt => rt.value === r.rule_type)?.label ?? r.rule_type}</td>
-                    <td className="px-5 py-3">
+                    <td data-label="Name" className="px-5 py-3 text-white font-medium">{r.name}</td>
+                    <td data-label="Type" className="px-5 py-3 text-white text-xs">{RULE_TYPES.find(rt => rt.value === r.rule_type)?.label ?? r.rule_type}</td>
+                    <td data-label="Severity" className="px-5 py-3">
                       <span className={`text-xs px-2 py-0.5 rounded-full capitalize ${SEV_STYLES[r.severity] ?? SEV_STYLES.info}`}>{r.severity}</span>
                     </td>
-                    <td className="px-5 py-3">
+                    <td data-label="Enabled" className="px-5 py-3">
                       <button onClick={() => toggleRule(r.id)}
                         className={`text-xs px-2 py-0.5 rounded ${r.enabled ? 'bg-green-900/40 text-green-400 border border-green-700/40' : 'bg-gray-800 text-white border border-gray-700'}`}>
                         {r.enabled ? 'Enabled' : 'Disabled'}

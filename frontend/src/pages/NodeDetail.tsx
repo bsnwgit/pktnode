@@ -293,7 +293,7 @@ function LargestFilesResult({ cmd }: { cmd?: CommandRecord }) {
       return <p className="text-xs text-white">No files found under {data.path || '/'}.</p>
     }
     return (
-      <div className="border border-gray-800 rounded-lg overflow-hidden">
+      <div className="f-tbl-scroll border border-gray-800 rounded-lg overflow-hidden">
         <table className="w-full text-xs">
           <tbody className="divide-y divide-gray-800/50">
             {data.files.map((f, i) => (
@@ -348,7 +348,7 @@ function DiskHealthResult({ cmd }: { cmd?: CommandRecord }) {
       return <p className="text-xs text-white">{rows[0].detail || 'Not available on this platform.'}</p>
     }
     return (
-      <div className="border border-gray-800 rounded-lg overflow-hidden">
+      <div className="f-tbl-scroll border border-gray-800 rounded-lg overflow-hidden">
         <table className="w-full text-xs">
           <tbody className="divide-y divide-gray-800/50">
             {rows.map((r, i) => {
@@ -872,7 +872,7 @@ function FileTransferModal({ nodeId, hostname, onClose }: { nodeId: number; host
               onDragLeave={() => setDragOver(false)}
               onDrop={onDrop}
             >
-              <table className="w-full text-xs">
+              <table className="f-tbl-cards w-full text-xs">
                 <thead className="sticky top-0 bg-gray-900 text-white">
                   <tr>
                     <th className="text-left font-medium px-3 py-2">Name</th>
@@ -887,7 +887,7 @@ function FileTransferModal({ nodeId, hostname, onClose }: { nodeId: number; host
                   )}
                   {entries.map(entry => (
                     <tr key={entry.path} className="border-t border-gray-800 hover:bg-gray-900">
-                      <td className="px-3 py-1.5">
+                      <td data-label="Name" className="px-3 py-1.5">
                         <button
                           onClick={() => entry.is_dir ? openDir(entry) : undefined}
                           disabled={!!transfer}
@@ -896,9 +896,9 @@ function FileTransferModal({ nodeId, hostname, onClose }: { nodeId: number; host
                           {entry.is_dir ? '📁' : '📄'} {entry.name}
                         </button>
                       </td>
-                      <td className="px-3 py-1.5 text-white">{entry.is_dir ? '—' : formatBytes(entry.size)}</td>
-                      <td className="px-3 py-1.5 text-white">{entry.modified ? new Date(entry.modified).toLocaleString() : '—'}</td>
-                      <td className="px-3 py-1.5">
+                      <td data-label="Size" className="px-3 py-1.5 text-white">{entry.is_dir ? '—' : formatBytes(entry.size)}</td>
+                      <td data-label="Modified" className="px-3 py-1.5 text-white">{entry.modified ? new Date(entry.modified).toLocaleString() : '—'}</td>
+                      <td data-label="Actions" className="px-3 py-1.5">
                         <div className="flex items-center justify-end gap-2">
                           {!entry.is_dir && (
                             <button onClick={() => downloadFile(entry)} disabled={!!transfer}
@@ -1466,29 +1466,31 @@ export default function NodeDetail() {
               </div>
             </div>
           )}
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-gray-800">
-                <th className="px-5 py-3 text-left text-xs font-medium text-white">Name</th>
-                <th className="px-5 py-3 text-left text-xs font-medium text-white">Version</th>
-                <th className="px-5 py-3 text-left text-xs font-medium text-white">Publisher</th>
-                <th className="px-5 py-3 text-left text-xs font-medium text-white">Installed</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-800/50">
-              {pagedSoftware.map((s, i) => (
-                <tr key={i} className="hover:bg-gray-800/30 transition-colors">
-                  <td className="px-5 py-2.5 text-white">{s.name}</td>
-                  <td className="px-5 py-2.5 text-white text-xs font-mono">{s.version || '—'}</td>
-                  <td className="px-5 py-2.5 text-white text-xs">{s.publisher || '—'}</td>
-                  <td className="px-5 py-2.5 text-white text-xs">{s.install_date || '—'}</td>
+          <div className="f-tbl-scroll">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-800">
+                  <th className="px-5 py-3 text-left text-xs font-medium text-white">Name</th>
+                  <th className="px-5 py-3 text-left text-xs font-medium text-white">Version</th>
+                  <th className="px-5 py-3 text-left text-xs font-medium text-white">Publisher</th>
+                  <th className="px-5 py-3 text-left text-xs font-medium text-white">Installed</th>
                 </tr>
-              ))}
-              {filteredSoftware.length === 0 && (
-                <tr><td colSpan={4} className="px-5 py-8 text-center text-sm text-white">{node.software.length === 0 ? 'No software inventory yet' : 'No software matches your search'}</td></tr>
-              )}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-gray-800/50">
+                {pagedSoftware.map((s, i) => (
+                  <tr key={i} className="hover:bg-gray-800/30 transition-colors">
+                    <td className="px-5 py-2.5 text-white">{s.name}</td>
+                    <td className="px-5 py-2.5 text-white text-xs font-mono">{s.version || '—'}</td>
+                    <td className="px-5 py-2.5 text-white text-xs">{s.publisher || '—'}</td>
+                    <td className="px-5 py-2.5 text-white text-xs">{s.install_date || '—'}</td>
+                  </tr>
+                ))}
+                {filteredSoftware.length === 0 && (
+                  <tr><td colSpan={4} className="px-5 py-8 text-center text-sm text-white">{node.software.length === 0 ? 'No software inventory yet' : 'No software matches your search'}</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
@@ -1512,39 +1514,41 @@ export default function NodeDetail() {
               </div>
             </div>
           )}
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-gray-800">
-                <th className="px-5 py-3 text-left text-xs font-medium text-white">PID</th>
-                <th className="px-5 py-3 text-left text-xs font-medium text-white">Name</th>
-                <th className="px-5 py-3 text-left text-xs font-medium text-white">CPU %</th>
-                <th className="px-5 py-3 text-left text-xs font-medium text-white">Memory</th>
-                <th className="px-5 py-3 text-left text-xs font-medium text-white">User</th>
-                <th className="px-5 py-3"></th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-800/50">
-              {pagedProcesses.map(p => (
-                <tr key={p.pid} className="hover:bg-gray-800/30 transition-colors">
-                  <td className="px-5 py-2.5 text-white text-xs font-mono">{p.pid}</td>
-                  <td className="px-5 py-2.5 text-white">{p.name}</td>
-                  <td className="px-5 py-2.5 text-white text-xs">{p.cpu_pct?.toFixed(1) ?? '—'}</td>
-                  <td className="px-5 py-2.5 text-white text-xs">{p.mem_mb?.toFixed(0) ?? '—'} MB</td>
-                  <td className="px-5 py-2.5 text-white text-xs">{p.username || '—'}</td>
-                  <td className="px-5 py-2.5 text-right">
-                    {canAct && (
-                      <button onClick={() => killProcess(p.pid, p.name)} className="text-xs text-red-400 hover:text-red-300 transition-colors">
-                        Kill
-                      </button>
-                    )}
-                  </td>
+          <div className="f-tbl-scroll">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-800">
+                  <th className="px-5 py-3 text-left text-xs font-medium text-white">PID</th>
+                  <th className="px-5 py-3 text-left text-xs font-medium text-white">Name</th>
+                  <th className="px-5 py-3 text-left text-xs font-medium text-white">CPU %</th>
+                  <th className="px-5 py-3 text-left text-xs font-medium text-white">Memory</th>
+                  <th className="px-5 py-3 text-left text-xs font-medium text-white">User</th>
+                  <th className="px-5 py-3"></th>
                 </tr>
-              ))}
-              {filteredProcesses.length === 0 && (
-                <tr><td colSpan={6} className="px-5 py-8 text-center text-sm text-white">{node.processes.length === 0 ? 'No process snapshot yet' : 'No processes match your search'}</td></tr>
-              )}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-gray-800/50">
+                {pagedProcesses.map(p => (
+                  <tr key={p.pid} className="hover:bg-gray-800/30 transition-colors">
+                    <td className="px-5 py-2.5 text-white text-xs font-mono">{p.pid}</td>
+                    <td className="px-5 py-2.5 text-white">{p.name}</td>
+                    <td className="px-5 py-2.5 text-white text-xs">{p.cpu_pct?.toFixed(1) ?? '—'}</td>
+                    <td className="px-5 py-2.5 text-white text-xs">{p.mem_mb?.toFixed(0) ?? '—'} MB</td>
+                    <td className="px-5 py-2.5 text-white text-xs">{p.username || '—'}</td>
+                    <td className="px-5 py-2.5 text-right">
+                      {canAct && (
+                        <button onClick={() => killProcess(p.pid, p.name)} className="text-xs text-red-400 hover:text-red-300 transition-colors">
+                          Kill
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+                {filteredProcesses.length === 0 && (
+                  <tr><td colSpan={6} className="px-5 py-8 text-center text-sm text-white">{node.processes.length === 0 ? 'No process snapshot yet' : 'No processes match your search'}</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
@@ -1575,29 +1579,31 @@ export default function NodeDetail() {
                 </div>
               </div>
             )}
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-gray-800">
-                  <th className="px-5 py-3 text-left text-xs font-medium text-white">Protocol</th>
-                  <th className="px-5 py-3 text-left text-xs font-medium text-white">Port</th>
-                  <th className="px-5 py-3 text-left text-xs font-medium text-white">Process</th>
-                  <th className="px-5 py-3 text-left text-xs font-medium text-white">PID</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-800/50">
-                {pagedPorts.map((p, i) => (
-                  <tr key={i} className="hover:bg-gray-800/30 transition-colors">
-                    <td className="px-5 py-2.5 text-white text-xs uppercase">{p.protocol}</td>
-                    <td className="px-5 py-2.5 text-white text-xs font-mono">{p.port}</td>
-                    <td className="px-5 py-2.5 text-white">{p.process_name || '—'}</td>
-                    <td className="px-5 py-2.5 text-white text-xs font-mono">{p.pid || '—'}</td>
+            <div className="f-tbl-scroll">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-800">
+                    <th className="px-5 py-3 text-left text-xs font-medium text-white">Protocol</th>
+                    <th className="px-5 py-3 text-left text-xs font-medium text-white">Port</th>
+                    <th className="px-5 py-3 text-left text-xs font-medium text-white">Process</th>
+                    <th className="px-5 py-3 text-left text-xs font-medium text-white">PID</th>
                   </tr>
-                ))}
-                {filteredPorts.length === 0 && (
-                  <tr><td colSpan={4} className="px-5 py-8 text-center text-sm text-white">{node.ports.length === 0 ? 'No listening-port data yet' : 'No ports match your search'}</td></tr>
-                )}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-gray-800/50">
+                  {pagedPorts.map((p, i) => (
+                    <tr key={i} className="hover:bg-gray-800/30 transition-colors">
+                      <td className="px-5 py-2.5 text-white text-xs uppercase">{p.protocol}</td>
+                      <td className="px-5 py-2.5 text-white text-xs font-mono">{p.port}</td>
+                      <td className="px-5 py-2.5 text-white">{p.process_name || '—'}</td>
+                      <td className="px-5 py-2.5 text-white text-xs font-mono">{p.pid || '—'}</td>
+                    </tr>
+                  ))}
+                  {filteredPorts.length === 0 && (
+                    <tr><td colSpan={4} className="px-5 py-8 text-center text-sm text-white">{node.ports.length === 0 ? 'No listening-port data yet' : 'No ports match your search'}</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}
@@ -1678,29 +1684,31 @@ export default function NodeDetail() {
                 </div>
               </div>
             )}
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-gray-800">
-                  <th className="px-5 py-3 text-left text-xs font-medium text-white">Time</th>
-                  <th className="px-5 py-3 text-left text-xs font-medium text-white">CPU %</th>
-                  <th className="px-5 py-3 text-left text-xs font-medium text-white">Memory %</th>
-                  <th className="px-5 py-3 text-left text-xs font-medium text-white">Disk %</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-800/50">
-                {pagedMetrics.map((m, i) => (
-                  <tr key={i} className="hover:bg-gray-800/30 transition-colors">
-                    <td className="px-5 py-2 text-white text-xs">{fmtTime(m.recorded_at)}</td>
-                    <td className="px-5 py-2 text-white text-xs">{m.cpu_pct?.toFixed(1) ?? '—'}</td>
-                    <td className="px-5 py-2 text-white text-xs">{m.mem_pct?.toFixed(1) ?? '—'}</td>
-                    <td className="px-5 py-2 text-white text-xs">{m.disk_pct?.toFixed(1) ?? '—'}</td>
+            <div className="f-tbl-scroll">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-800">
+                    <th className="px-5 py-3 text-left text-xs font-medium text-white">Time</th>
+                    <th className="px-5 py-3 text-left text-xs font-medium text-white">CPU %</th>
+                    <th className="px-5 py-3 text-left text-xs font-medium text-white">Memory %</th>
+                    <th className="px-5 py-3 text-left text-xs font-medium text-white">Disk %</th>
                   </tr>
-                ))}
-                {filteredMetrics.length === 0 && (
-                  <tr><td colSpan={4} className="px-5 py-8 text-center text-sm text-white">{node.metrics_history.length === 0 ? 'No metrics history yet' : 'No metrics match your search'}</td></tr>
-                )}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-gray-800/50">
+                  {pagedMetrics.map((m, i) => (
+                    <tr key={i} className="hover:bg-gray-800/30 transition-colors">
+                      <td className="px-5 py-2 text-white text-xs">{fmtTime(m.recorded_at)}</td>
+                      <td className="px-5 py-2 text-white text-xs">{m.cpu_pct?.toFixed(1) ?? '—'}</td>
+                      <td className="px-5 py-2 text-white text-xs">{m.mem_pct?.toFixed(1) ?? '—'}</td>
+                      <td className="px-5 py-2 text-white text-xs">{m.disk_pct?.toFixed(1) ?? '—'}</td>
+                    </tr>
+                  ))}
+                  {filteredMetrics.length === 0 && (
+                    <tr><td colSpan={4} className="px-5 py-8 text-center text-sm text-white">{node.metrics_history.length === 0 ? 'No metrics history yet' : 'No metrics match your search'}</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}
@@ -1730,27 +1738,29 @@ export default function NodeDetail() {
                 </div>
               </div>
             )}
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-gray-800">
-                  <th className="px-5 py-3 text-left text-xs font-medium text-white">Time</th>
-                  <th className="px-5 py-3 text-left text-xs font-medium text-white">Upload</th>
-                  <th className="px-5 py-3 text-left text-xs font-medium text-white">Download</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-800/50">
-                {pagedNetwork.map((m, i) => (
-                  <tr key={i} className="hover:bg-gray-800/30 transition-colors">
-                    <td className="px-5 py-2 text-white text-xs">{fmtTime(m.recorded_at)}</td>
-                    <td className="px-5 py-2 text-white text-xs">{m.sent_mbps !== null ? `${m.sent_mbps.toFixed(1)} Mbps` : '—'}</td>
-                    <td className="px-5 py-2 text-white text-xs">{m.recv_mbps !== null ? `${m.recv_mbps.toFixed(1)} Mbps` : '—'}</td>
+            <div className="f-tbl-scroll">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-800">
+                    <th className="px-5 py-3 text-left text-xs font-medium text-white">Time</th>
+                    <th className="px-5 py-3 text-left text-xs font-medium text-white">Upload</th>
+                    <th className="px-5 py-3 text-left text-xs font-medium text-white">Download</th>
                   </tr>
-                ))}
-                {filteredNetwork.length === 0 && (
-                  <tr><td colSpan={3} className="px-5 py-8 text-center text-sm text-white">{node.network_history.length === 0 ? 'No network history yet' : 'No rows match your search'}</td></tr>
-                )}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-gray-800/50">
+                  {pagedNetwork.map((m, i) => (
+                    <tr key={i} className="hover:bg-gray-800/30 transition-colors">
+                      <td className="px-5 py-2 text-white text-xs">{fmtTime(m.recorded_at)}</td>
+                      <td className="px-5 py-2 text-white text-xs">{m.sent_mbps !== null ? `${m.sent_mbps.toFixed(1)} Mbps` : '—'}</td>
+                      <td className="px-5 py-2 text-white text-xs">{m.recv_mbps !== null ? `${m.recv_mbps.toFixed(1)} Mbps` : '—'}</td>
+                    </tr>
+                  ))}
+                  {filteredNetwork.length === 0 && (
+                    <tr><td colSpan={3} className="px-5 py-8 text-center text-sm text-white">{node.network_history.length === 0 ? 'No network history yet' : 'No rows match your search'}</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}
@@ -1788,7 +1798,7 @@ export default function NodeDetail() {
               </div>
             </div>
           )}
-          <table className="w-full text-sm">
+          <table className="f-tbl-cards w-full text-sm">
             <thead>
               <tr className="border-b border-gray-800">
                 <th className="px-5 py-3 text-left text-xs font-medium text-white">Type</th>
@@ -1801,11 +1811,11 @@ export default function NodeDetail() {
             <tbody className="divide-y divide-gray-800/50">
               {pagedCommands.map(c => (
                 <tr key={c.id} onClick={() => openConsole(c)} className="hover:bg-gray-800/30 transition-colors cursor-pointer">
-                  <td className="px-5 py-2.5 text-white">{c.command_type}</td>
-                  <td className="px-5 py-2.5"><span className={`text-xs px-2 py-0.5 rounded-full ${COMMAND_STATUS_STYLES[c.status]}`}>{c.status}</span></td>
-                  <td className="px-5 py-2.5 text-white text-xs">{c.created_by || '—'}</td>
-                  <td className="px-5 py-2.5 text-white text-xs">{fmtTime(c.created_at)}</td>
-                  <td className="px-5 py-2.5 text-white text-xs font-mono max-w-xs truncate">{c.result?.output || '—'}</td>
+                  <td data-label="Type" className="px-5 py-2.5 text-white">{c.command_type}</td>
+                  <td data-label="Status" className="px-5 py-2.5"><span className={`text-xs px-2 py-0.5 rounded-full ${COMMAND_STATUS_STYLES[c.status]}`}>{c.status}</span></td>
+                  <td data-label="Created by" className="px-5 py-2.5 text-white text-xs">{c.created_by || '—'}</td>
+                  <td data-label="Created" className="px-5 py-2.5 text-white text-xs">{fmtTime(c.created_at)}</td>
+                  <td data-label="Result" className="px-5 py-2.5 text-white text-xs font-mono max-w-xs truncate">{c.result?.output || '—'}</td>
                 </tr>
               ))}
               {filteredCommands.length === 0 && (
@@ -1852,7 +1862,7 @@ export default function NodeDetail() {
               </div>
             </div>
           )}
-          <table className="w-full text-sm">
+          <table className="f-tbl-cards w-full text-sm">
             <thead>
               <tr className="border-b border-gray-800">
                 <th className="px-5 py-3 text-left text-xs font-medium text-white">Status</th>
@@ -1868,16 +1878,16 @@ export default function NodeDetail() {
             <tbody className="divide-y divide-gray-800/50">
               {pagedSpeedtests.map(s => (
                 <tr key={s.id} className="hover:bg-gray-800/30 transition-colors">
-                  <td className="px-5 py-2.5">
+                  <td data-label="Status" className="px-5 py-2.5">
                     <span className={`text-xs px-2 py-0.5 rounded-full ${COMMAND_STATUS_STYLES[s.status]}`}>{s.status}</span>
                   </td>
-                  <td className="px-5 py-2.5 text-white text-xs font-mono">{s.download_mbps !== null ? `${s.download_mbps.toFixed(1)} Mbps` : '—'}</td>
-                  <td className="px-5 py-2.5 text-white text-xs font-mono">{s.upload_mbps !== null ? `${s.upload_mbps.toFixed(1)} Mbps` : '—'}</td>
-                  <td className="px-5 py-2.5 text-white text-xs font-mono">{s.latency_ms !== null ? `${s.latency_ms.toFixed(0)} ms` : '—'}</td>
-                  <td className="px-5 py-2.5 text-white text-xs font-mono">{s.jitter_ms !== null ? `${s.jitter_ms.toFixed(0)} ms` : '—'}</td>
-                  <td className="px-5 py-2.5 text-white text-xs max-w-[12rem] truncate" title={s.server_fqdn || s.error || ''}>{s.server_fqdn || s.error || '—'}</td>
-                  <td className="px-5 py-2.5 text-white text-xs capitalize">{s.triggered_by}</td>
-                  <td className="px-5 py-2.5 text-white text-xs">{fmtTime(s.created_at)}</td>
+                  <td data-label="Download" className="px-5 py-2.5 text-white text-xs font-mono">{s.download_mbps !== null ? `${s.download_mbps.toFixed(1)} Mbps` : '—'}</td>
+                  <td data-label="Upload" className="px-5 py-2.5 text-white text-xs font-mono">{s.upload_mbps !== null ? `${s.upload_mbps.toFixed(1)} Mbps` : '—'}</td>
+                  <td data-label="Latency" className="px-5 py-2.5 text-white text-xs font-mono">{s.latency_ms !== null ? `${s.latency_ms.toFixed(0)} ms` : '—'}</td>
+                  <td data-label="Jitter" className="px-5 py-2.5 text-white text-xs font-mono">{s.jitter_ms !== null ? `${s.jitter_ms.toFixed(0)} ms` : '—'}</td>
+                  <td data-label="Server" className="px-5 py-2.5 text-white text-xs max-w-[12rem] truncate" title={s.server_fqdn || s.error || ''}>{s.server_fqdn || s.error || '—'}</td>
+                  <td data-label="Trigger" className="px-5 py-2.5 text-white text-xs capitalize">{s.triggered_by}</td>
+                  <td data-label="Ran" className="px-5 py-2.5 text-white text-xs">{fmtTime(s.created_at)}</td>
                 </tr>
               ))}
               {filteredSpeedtests.length === 0 && (
@@ -2016,7 +2026,7 @@ export default function NodeDetail() {
 
           <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
             <p className="text-xs text-white px-5 py-3 border-b border-gray-800">Disks</p>
-            <table className="w-full text-sm">
+            <table className="f-tbl-cards w-full text-sm">
               <thead>
                 <tr className="border-b border-gray-800">
                   <th className="px-5 py-3 text-left text-xs font-medium text-white">Name</th>
@@ -2031,17 +2041,17 @@ export default function NodeDetail() {
               <tbody className="divide-y divide-gray-800/50">
                 {node.unraid_disks.map((d, i) => (
                   <tr key={i} className="hover:bg-gray-800/30 transition-colors">
-                    <td className="px-5 py-2.5 text-white font-mono text-xs">{d.name}</td>
-                    <td className="px-5 py-2.5 text-white text-xs">{d.role || '—'}</td>
-                    <td className="px-5 py-2.5 text-xs">
+                    <td data-label="Name" className="px-5 py-2.5 text-white font-mono text-xs">{d.name}</td>
+                    <td data-label="Role" className="px-5 py-2.5 text-white text-xs">{d.role || '—'}</td>
+                    <td data-label="Status" className="px-5 py-2.5 text-xs">
                       <span className={`px-2 py-0.5 rounded-full ${d.status === 'DISK_OK' ? 'bg-green-900/40 text-green-400 border border-green-700/40' : 'bg-gray-800 text-white border border-gray-700'}`}>
                         {d.status === 'DISK_OK' ? 'OK' : d.status === 'DISK_NP' ? 'Not present' : d.status || '—'}
                       </span>
                     </td>
-                    <td className="px-5 py-2.5 text-white text-xs">{d.temp_c !== null ? `${d.temp_c.toFixed(0)}°C` : '—'}</td>
-                    <td className="px-5 py-2.5 text-white text-xs">{d.size_gb !== null ? `${d.size_gb.toFixed(0)} GB` : '—'}</td>
-                    <td className="px-5 py-2.5 text-white text-xs">{d.fs_type || '—'}</td>
-                    <td className={`px-5 py-2.5 text-xs ${d.num_errors ? 'text-red-400' : 'text-white'}`}>{d.num_errors ?? '—'}</td>
+                    <td data-label="Temp" className="px-5 py-2.5 text-white text-xs">{d.temp_c !== null ? `${d.temp_c.toFixed(0)}°C` : '—'}</td>
+                    <td data-label="Size" className="px-5 py-2.5 text-white text-xs">{d.size_gb !== null ? `${d.size_gb.toFixed(0)} GB` : '—'}</td>
+                    <td data-label="Filesystem" className="px-5 py-2.5 text-white text-xs">{d.fs_type || '—'}</td>
+                    <td data-label="Errors" className={`px-5 py-2.5 text-xs ${d.num_errors ? 'text-red-400' : 'text-white'}`}>{d.num_errors ?? '—'}</td>
                   </tr>
                 ))}
                 {node.unraid_disks.length === 0 && (
@@ -2058,7 +2068,7 @@ export default function NodeDetail() {
           <p className="text-xs text-white px-5 py-3 border-b border-gray-800">
             Actions run on the node's next check-in, not live.
           </p>
-          <table className="w-full text-sm">
+          <table className="f-tbl-cards w-full text-sm">
             <thead>
               <tr className="border-b border-gray-800">
                 <th className="px-5 py-3 text-left text-xs font-medium text-white">Name</th>
@@ -2076,14 +2086,14 @@ export default function NodeDetail() {
                 const pending = !!latest && isInFlight(latest)
                 return (
                   <tr key={i} className="hover:bg-gray-800/30 transition-colors">
-                    <td className="px-5 py-2.5 text-white">{c.name}</td>
-                    <td className="px-5 py-2.5 text-white text-xs font-mono">{c.image || '—'}</td>
-                    <td className="px-5 py-2.5 text-xs">
+                    <td data-label="Name" className="px-5 py-2.5 text-white">{c.name}</td>
+                    <td data-label="Image" className="px-5 py-2.5 text-white text-xs font-mono">{c.image || '—'}</td>
+                    <td data-label="State" className="px-5 py-2.5 text-xs">
                       <span className={`px-2 py-0.5 rounded-full capitalize ${running ? 'bg-green-900/40 text-green-400 border border-green-700/40' : 'bg-gray-800 text-white border border-gray-700'}`}>
                         {c.state || '—'}
                       </span>
                     </td>
-                    <td className="px-5 py-2.5 text-white text-xs">{c.status || '—'}</td>
+                    <td data-label="Status" className="px-5 py-2.5 text-white text-xs">{c.status || '—'}</td>
                     <td className="px-5 py-2.5">
                       {canAct && (
                         <div className="flex justify-end items-center gap-2">
@@ -2130,7 +2140,7 @@ export default function NodeDetail() {
           <p className="text-xs text-white px-5 py-3 border-b border-gray-800">
             Actions run on the node's next check-in, not live. Stop/Restart send a graceful shutdown/reboot signal to the guest OS.
           </p>
-          <table className="w-full text-sm">
+          <table className="f-tbl-cards w-full text-sm">
             <thead>
               <tr className="border-b border-gray-800">
                 <th className="px-5 py-3 text-left text-xs font-medium text-white">Name</th>
@@ -2146,8 +2156,8 @@ export default function NodeDetail() {
                 const pending = !!latest && isInFlight(latest)
                 return (
                   <tr key={i} className="hover:bg-gray-800/30 transition-colors">
-                    <td className="px-5 py-2.5 text-white">{v.name}</td>
-                    <td className="px-5 py-2.5 text-xs">
+                    <td data-label="Name" className="px-5 py-2.5 text-white">{v.name}</td>
+                    <td data-label="State" className="px-5 py-2.5 text-xs">
                       <span className={`px-2 py-0.5 rounded-full capitalize ${running ? 'bg-green-900/40 text-green-400 border border-green-700/40' : 'bg-gray-800 text-white border border-gray-700'}`}>
                         {v.state || '—'}
                       </span>
