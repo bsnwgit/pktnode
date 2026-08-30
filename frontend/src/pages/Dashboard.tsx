@@ -110,7 +110,7 @@ export default function Dashboard() {
         {recentlySeen.length === 0 ? (
           <p className="px-5 py-8 text-center text-sm text-white">No nodes have checked in yet. Enroll one under Settings → Enrollment.</p>
         ) : (
-          <table className="w-full text-sm">
+          <table className="f-tbl-cards w-full text-sm">
             <thead>
               <tr className="border-b border-gray-800">
                 <th className="px-5 py-2 text-left text-xs font-medium text-white">Hostname</th>
@@ -122,12 +122,12 @@ export default function Dashboard() {
             <tbody className="divide-y divide-gray-800/50">
               {recentlySeen.map(n => (
                 <tr key={n.id} className="hover:bg-gray-800/30 transition-colors cursor-pointer" onClick={() => navigate(`/nodes/${n.id}`)}>
-                  <td className="px-5 py-2.5 text-white font-medium">{n.display_name || n.hostname}</td>
-                  <td className="px-5 py-2.5 text-white text-xs capitalize">{n.os_type}{n.os_version ? ` ${n.os_version}` : ''}</td>
-                  <td className="px-5 py-2.5">
+                  <td data-label="Hostname" className="px-5 py-2.5 text-white font-medium">{n.display_name || n.hostname}</td>
+                  <td data-label="OS" className="px-5 py-2.5 text-white text-xs capitalize">{n.os_type}{n.os_version ? ` ${n.os_version}` : ''}</td>
+                  <td data-label="Status" className="px-5 py-2.5">
                     <span className={`text-xs px-2 py-0.5 rounded-full capitalize ${STATUS_STYLES[n.status] ?? STATUS_STYLES.pending}`}>{n.status}</span>
                   </td>
-                  <td className="px-5 py-2.5 text-white text-xs">{fmtRelative(n.last_checkin_at)}</td>
+                  <td data-label="Last check-in" className="px-5 py-2.5 text-white text-xs">{fmtRelative(n.last_checkin_at)}</td>
                 </tr>
               ))}
             </tbody>
