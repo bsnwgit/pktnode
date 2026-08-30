@@ -4,7 +4,7 @@
   <img src="lockup-256h.png" alt="pktNode" height="64">
 </p>
 
-RMM (remote monitoring & management) for the pkt suite — tracks and manages
+RMM (remote monitoring & management) for the [pkt suite](#the-pkt-suite) — tracks and manages
 user-level assets (Mac/Windows/Linux endpoints) via a lightweight Go agent
 that enrolls with the server, checks in on an interval reporting hardware/
 software inventory and live resource usage, executes queued remote actions
@@ -42,6 +42,7 @@ over the same always-open control channel.
 - [Troubleshooting](#troubleshooting)
 - [Development](#development)
 - [Known Gaps / Fast-Follow Work](#known-gaps--fast-follow-work)
+- [The pkt suite](#the-pkt-suite)
 
 ---
 
@@ -1026,3 +1027,30 @@ immediately.
 Use the **Send test message** button (or the `test` endpoint) to confirm the
 path end to end rather than assuming it works.
 
+## The pkt suite
+
+**pktNode** is one of ten apps in the pkt suite — self-hosted tooling for network
+and security operations. Each installs and runs standalone, so take only the ones
+you need; they share one architecture (FastAPI + React), one look, one
+`admin`/`analyst`/`viewer` role model, and a suite token that lets siblings read
+one another's data. Default ports don't collide (8760–8769), so any combination
+runs on a single host.
+
+| App | Port | What it does |
+|---|---|---|
+| **[pktFlow](https://github.com/bsnwgit/pktflow)** | `8766` | NetFlow, sFlow and IPFIX collection — flow search, traffic analytics, geo and topology views |
+| **[pktSNMP](https://github.com/bsnwgit/pktsnmp)** | `8767` | SNMP polling and trap receiving for any OID — device health and metric history without a full NMS |
+| **[pktLog](https://github.com/bsnwgit/pktlog)** | `8768` | Syslog over UDP, TCP and TLS — parsing, enrichment, full-text search and forwarding |
+| **[pktPCAP](https://github.com/bsnwgit/pktpcap)** | `8765` | Packet capture analysis in the browser — drop in a `.pcap` for TCP, DNS and threat findings, no Wireshark install |
+| **[pktWiFi](https://github.com/bsnwgit/pktwifi)** | `8769` | Access point, RF and client visibility from Meraki and UniFi controllers or plain SNMP polling |
+| **[pktIPAM](https://github.com/bsnwgit/pktipam)** | `8761` | IP address management reconciling declared subnets against live DHCP, DNS and device data, flagging conflicts |
+| **pktNode** *(you are here)* | `8764` | Endpoint monitoring and management for Mac, Windows and Linux via a lightweight Go agent |
+| **[pktSecurity](https://github.com/bsnwgit/pktsecurity)** | `8762` | Security operations across the estate — CVE exposure, threat intelligence, ATT&CK-mapped detections and case management |
+| **[pktCert](https://github.com/bsnwgit/pktcert)** | `8763` | TLS certificate discovery and expiry tracking, plus an internal CA — issue, revoke and serve CRLs |
+| **[pktHub](https://github.com/bsnwgit/pkthub)** | `8760` | The front door — one sign-in, one alert stream, NOC wallboards and user management across every registered app |
+
+[pktHub](https://github.com/bsnwgit/pkthub) is optional — it registers the others
+and puts them behind a single login with shared alerting and NOC wallboards — but
+every app is fully usable without it.
+
+More at **[pktsolution.com](https://pktsolution.com)**.
