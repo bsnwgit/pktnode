@@ -84,13 +84,10 @@ htmlcov/
 # ─── Deployment scripts (contain env-specific SSH keys/IPs) ──────────────────
 scripts/
 
-# ─── Claude project notes (deployment-specific) ───────────────────────────────
-CLAUDE.md
-
 # ─── Misc ─────────────────────────────────────────────────────────────────────
 *.bak
 *.orig
 # one-off repair script, not part of the codebase
 fix_truncated.py
-# Claude working artifact, not source
+# working artifact, not source
 todo_widget.html
