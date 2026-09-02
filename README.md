@@ -4,6 +4,17 @@
   <img src="lockup-256h.png" alt="pktNode" height="64">
 </p>
 
+<p align="center">
+  <img src="docs/screenshots/dashboard.webp" alt="pktNode — Dashboard" width="900">
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/nodes.webp" alt="pktNode — Nodes" width="430">
+  <img src="docs/screenshots/enrollment.webp" alt="pktNode — Agent enrollment" width="430">
+</p>
+
+<p align="center"><sub>Dashboard &middot; Nodes &middot; Agent enrollment</sub></p>
+
 RMM (remote monitoring & management) for the [pkt suite](#the-pkt-suite) — tracks and manages
 user-level assets (Mac/Windows/Linux endpoints) via a lightweight Go agent
 that enrolls with the server, checks in on an interval reporting hardware/
