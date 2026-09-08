@@ -221,6 +221,10 @@ For an install with no pktHub in front of it, the address can be set directly wi
 
 ## Troubleshooting
 
+The most common ones. For anything else — enrolment, the control channel, agent
+updates, per-platform problems, TLS and the agent URL — see
+[TROUBLESHOOTING.md](TROUBLESHOOTING.md).
+
 | Symptom | Check |
 |---|---|
 | Service won't start | `journalctl -u pktnode -n 50`; check `config.yaml` and secret key |
