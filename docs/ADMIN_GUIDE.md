@@ -37,6 +37,7 @@ Admin and analyst can queue commands, open Live Terminal and File Transfer, and 
 ## Enrollment
 
 1. Enrollment page → **New Token**. Optional label, expiry, and max-use count (1 for a single machine, unlimited for a shared rollout token). The raw token is shown once; use **Get Install Command** on the token's row later if you need it again (generates a fresh token with the same label/limits, since a token with a finite max-use count is deleted outright the moment its last use is consumed — see below — rather than sitting around exhausted).
+   The command is built from **Settings → General → Agent URL**, falling back to the address your browser is on. Set it whenever you reach this app through pktHub: the hub proxies the web UI but not the installers, so a command built from the hub's address downloads the hub's web page instead of a script.
 2. Run the install command on the target machine:
 
 ```bash
@@ -168,6 +169,10 @@ If a device is in two groups with conflicting settings for the *same field* of t
 
 Four built-in rule types, evaluated every 60 seconds: `node_offline`, `disk_low`, `cpu_high`, `mem_high`. Manage rules (thresholds, severity, channels, cooldown) on Alerts → Rules — you can have more than one rule of the same type at different severities/thresholds. Notification channels (Slack/Email/PagerDuty/Webhook/TraceCat) are configured under Settings → Notifications. Deleting a node (Overview → **Delete Permanently**) auto-resolves any of its still-open alert events first, so it can't leave a stuck "offline" alert behind with nothing left to auto-resolve it.
 
+## Ignoring drives
+
+The Dashboard's **Disk pressure** list and the pktHub disk widget rank volumes by how full they are, so volumes that are always 100% by design (read-only images, snap mounts) crowd out the ones worth watching. Settings → Data → **Ignored drives** lists every drive the fleet has reported, grouped by node. Tick a drive to hide it. Where a node has several mounts under one folder (such as `/snap`), one tick covers the whole folder, including mounts found later. The pattern box below the list hides a mount on every node instead (`*` is the only wildcard; matching is case-sensitive). Ignored drives still appear on each node's Storage tab, and the Low disk alert is unaffected — it uses each node's total free space, not individual volumes.
+
 ## Backup & Restore
 
 Configure schedule and rotation at Settings → Data → Backups. Each snapshot is a timestamped directory containing `pktnode.db` + `config.yaml`.
@@ -213,7 +218,7 @@ Where no role is set to *Read and write*, the write operations are withheld from
 
 pktHub can put this app into **Managed mode**, which stops people reaching its UI directly and sends them to the hub instead. Nothing needs configuring here: the hub sends the address to redirect to when it applies the lock, because that address is built from the hub's own Base URL and this app's id in the hub's registry, and neither is visible from this side.
 
-The lock redirects rather than shuts down. Anything carrying a valid suite token passes through untouched, as do `/api/health`, `/api/suite/`, `/api/auth/` and the paths a hub-rendered page needs, so pktHub itself keeps working normally. Enrolled agents talk to `/api/` endpoints with their own credentials and are unaffected.
+The lock redirects rather than shuts down. Anything carrying a valid suite token passes through untouched, as do `/api/health`, `/api/suite/`, `/api/auth/` and the paths a hub-rendered page needs, so pktHub itself keeps working normally. The agent's own surface — `/api/agent/`, the installer scripts and `/agent-releases/` — is also left open, so enrolment, check-ins and installs keep working; each of those routes carries its own token or agent-secret auth. Agents must be given an address that reaches this app directly (see Agent URL under Enrollment).
 
 **It expires on its own.** Every call from pktHub refreshes a heartbeat and the lock releases after five minutes without one, so it does not depend on the hub coming back — a lock only pktHub could lift would strand this app exactly when pktHub is what broke. `GET /api/suite/mode` reports the current state without authentication.
 

@@ -62,10 +62,10 @@ function NewTokenModal({ onClose, onCreated }: { onClose: () => void; onCreated:
   )
 }
 
-function InstallSnippet({ token }: { token: string }) {
+function InstallSnippet({ token, agentUrl }: { token: string; agentUrl: string }) {
   const [os, setOs] = useState<'darwin' | 'linux' | 'unraid' | 'windows' | 'haos'>('darwin')
   const [copied, setCopied] = useState<'command' | 'server' | 'token' | null>(null)
-  const baseUrl = window.location.origin
+  const baseUrl = agentUrl || window.location.origin
   // Unraid gets the exact same install-agent.sh command as any other
   // Linux box — it reports as Linux via uname, and every OS-specific bit
   // (persistence, service supervision, reboot/shutdown, etc.) is handled
@@ -158,6 +158,7 @@ export default function Enrollment() {
   const [tab, setTab]             = useState<'active' | 'revoked'>('active')
   const [tokens, setTokens]       = useState<EnrollmentToken[]>([])
   const [loading, setLoading]     = useState(true)
+  const [agentUrl, setAgentUrl]   = useState('')
   const [showNew, setShowNew]     = useState(false)
   const [newToken, setNewToken]   = useState<{ token: string; label: string } | null>(null)
   const [confirmRevoke, setConfirmRevoke] = useState<EnrollmentToken | null>(null)
@@ -168,6 +169,10 @@ export default function Enrollment() {
     try { setTokens(await api.getEnrollmentTokens()) } finally { setLoading(false) }
   }
   useEffect(() => { load() }, [])
+  // Best-effort: with no setting the snippet falls back to the page's own address.
+  useEffect(() => {
+    api.getSettings().then(s => setAgentUrl(String(s.agent_url ?? '').trim().replace(/\/+$/, ''))).catch(() => {})
+  }, [])
 
   const revoke = async (t: EnrollmentToken) => {
     await api.revokeEnrollmentToken(t.id)
@@ -214,7 +219,7 @@ export default function Enrollment() {
           <p className="text-sm text-white">
             Install command for <span className="text-white font-semibold">{newToken.label}</span> — copy it now, the raw token won't be shown again after you navigate away or dismiss this.
           </p>
-          <InstallSnippet token={newToken.token} />
+          <InstallSnippet token={newToken.token} agentUrl={agentUrl} />
           <button onClick={() => setNewToken(null)} className="text-xs text-white hover:text-white underline">Dismiss</button>
         </div>
       )}

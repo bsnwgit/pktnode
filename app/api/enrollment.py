@@ -77,7 +77,9 @@ async def create_token(body: EnrollmentTokenIn, user: AdminUser, db: DbDep) -> d
         INSERT INTO enrollment_tokens (token_hash, label, created_by, expires_at, max_uses)
         VALUES (?, ?, ?, ?, ?)
         """,
-        (_hash_token(raw_token), body.label, user["id"], expires_at, body.max_uses),
+        # A pkthub session is a synthetic user with id 0, which has no row in
+        # users — storing it trips the created_by foreign key.
+        (_hash_token(raw_token), body.label, user["id"] or None, expires_at, body.max_uses),
     ) as cur:
         token_id = cur.lastrowid
     await db.commit()

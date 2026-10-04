@@ -14,7 +14,7 @@ Settings has a section bar at the top with **Common** (General, Security, Data, 
 
 ## Dashboard
 
-Clickable tiles for total/online/offline/stale/pending node counts and active alert count — each jumps to the corresponding filtered view — plus a table of the 10 most recently checked-in nodes.
+Clickable tiles for total/online/offline/stale/pending node counts and active alert count — each jumps to the corresponding filtered view — plus fleet charts and a table of the 10 most recently checked-in nodes. The window picker (1h / 6h / 24h / 7d) drives the two trend charts: **Fleet resources** (CPU, memory and disk averaged across nodes) and **Fleet network** (upload and download added together). The rest — fleet status, top CPU, top memory, the fullest disks and nodes by OS — show the fleet as of the latest check-ins; click a bar to open that node. Nodes that have gone quiet are left out of the top lists, and an admin can hide drives that are always full from Disk pressure under Settings → Data.
 
 ## Nodes
 

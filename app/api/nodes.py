@@ -427,7 +427,7 @@ async def queue_command(node_id: int, body: CommandIn, user: AnalystUser, db: Db
 
     async with db.execute(
         "INSERT INTO commands (node_id, command_type, payload_json, created_by) VALUES (?,?,?,?)",
-        (node_id, body.command_type, json.dumps(body.payload), user["id"]),
+        (node_id, body.command_type, json.dumps(body.payload), user["id"] or None),
     ) as cur:
         command_id = cur.lastrowid
     await db.commit()
@@ -501,7 +501,7 @@ async def push_agent_update(body: AgentUpdateIn, user: AnalystUser, db: DbDep) -
     for t in targets:
         async with db.execute(
             "INSERT INTO commands (node_id, command_type, payload_json, created_by) VALUES (?,?,?,?)",
-            (t["id"], "update_agent", "{}", user["id"]),
+            (t["id"], "update_agent", "{}", user["id"] or None),
         ) as cur:
             queued.append({"node_id": t["id"], "command_id": cur.lastrowid})
     await db.commit()
