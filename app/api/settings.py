@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 import json
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +32,22 @@ DEFAULTS: dict[str, Any] = {
 
     # Agent check-in interval the server hands out at enrollment time (seconds).
     "agent_checkin_interval_sec": 60,
+
+    # Mount points left out of the fleet disk views (shell-style patterns, e.g.
+    # "/snap/*", "/dev"). Volumes that are always 100% by design — read-only
+    # images, loop mounts — would otherwise crowd out the ones worth watching.
+    "disk_exclude_mounts": [],
+
+    # Drives ticked off in Settings, as "<node_id>:<mount>" — the mount may be a
+    # pattern ("3:/snap/*") for a folder of repeating mounts. Kept apart from the
+    # list above because these name one node's volumes, while a pattern there
+    # names a mount on every node.
+    "disk_exclude_drives": [],
+
+    # Address agents use to reach this server — what the Enrollment page puts in
+    # the install command. Blank = the address the page was opened on, which is
+    # wrong behind pktHub: its proxy serves the web UI but not the installers.
+    "agent_url": "",
 
     # How often each node runs an unattended NDT7 speed test (seconds).
     # 0 = scheduled speed tests disabled (on-demand "Run Speedtest" still works).
@@ -196,6 +213,36 @@ async def read_secret(db: aiosqlite.Connection, key: str) -> str:
         return ""
     from app.crypto import decrypt_str
     return decrypt_str(stored)
+
+
+def parse_mount_patterns(raw: Any) -> list[str]:
+    """The stored disk_exclude_mounts, tolerant of a hand-edited or legacy value."""
+    if not isinstance(raw, list):
+        return []
+    return [p.strip() for p in raw if isinstance(p, str) and p.strip()]
+
+
+def mount_excluded(mount: str, patterns: list[str]) -> bool:
+    return any(fnmatchcase(mount, p) for p in patterns)
+
+
+async def disk_exclusions(db: aiosqlite.Connection) -> tuple[list[str], set[str]]:
+    """(mount patterns, individually ignored "<node_id>:<mount>" drives)."""
+    async with db.execute(
+        "SELECT key, value FROM settings WHERE key IN ('disk_exclude_mounts', 'disk_exclude_drives')"
+    ) as cur:
+        raw = {r[0]: _safe_loads(r[1]) for r in await cur.fetchall()}
+    return (parse_mount_patterns(raw.get("disk_exclude_mounts")),
+            set(parse_mount_patterns(raw.get("disk_exclude_drives"))))
+
+
+def drive_excluded(node_id: int, mount: str, patterns: list[str], drives: set[str]) -> bool:
+    if f"{node_id}:{mount}" in drives or mount_excluded(mount, patterns):
+        return True
+    # A per-node entry may also be a pattern ("3:/snap/*") — the Settings page
+    # writes one for a whole folder of repeating mounts on that node.
+    pfx = f"{node_id}:"
+    return any(fnmatchcase(mount, d[len(pfx):]) for d in drives if d.startswith(pfx))
 
 
 async def _ensure_defaults(db: aiosqlite.Connection) -> None:

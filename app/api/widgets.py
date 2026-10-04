@@ -18,6 +18,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from app.config import get_settings
 from app.dependencies import require_suite_token
 from app.api.nodes import _STATUS_EXPR, _status_params
+from app.api.settings import drive_excluded, parse_mount_patterns, _safe_loads
 
 # These views are embedded as unauthenticated iframes by pktHub's NOC Builder,
 # so they can't require a login session — but they do render internal node and
@@ -707,11 +708,16 @@ async def widget_top_memory():
             dependencies=[Depends(require_suite_token)])
 async def widget_disk_pressure():
     rows = await _rows(
-        """SELECT n.hostname, n.display_name, d.mount_point, d.used_pct, d.free_gb, d.total_gb
+        """SELECT n.id AS node_id, n.hostname, n.display_name, d.mount_point, d.used_pct, d.free_gb, d.total_gb
            FROM node_disks d JOIN nodes n ON n.id = d.node_id
            WHERE n.is_active = 1 AND d.used_pct IS NOT NULL
-           ORDER BY d.used_pct DESC LIMIT 30"""
+           ORDER BY d.used_pct DESC"""
     )
+    cfg = {r["key"]: _safe_loads(r["value"]) for r in await _rows(
+        "SELECT key, value FROM settings WHERE key IN ('disk_exclude_mounts', 'disk_exclude_drives')")}
+    patterns = parse_mount_patterns(cfg.get("disk_exclude_mounts"))
+    ignored = set(parse_mount_patterns(cfg.get("disk_exclude_drives")))
+    rows = [r for r in rows if not drive_excluded(r["node_id"], r["mount_point"], patterns, ignored)][:30]
     if rows:
         trs = "".join(
             f"<tr><td>{html.escape(str(r['display_name'] or r['hostname']))}</td>"

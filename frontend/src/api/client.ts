@@ -313,6 +313,9 @@ export const api = {
     request<{ code: string; expires_in_sec: number }>(`/nodes/${id}/override-code`),
   checkinNow: (id: number) => request<{ ok: boolean }>(`/nodes/${id}/checkin-now`, { method: 'POST' }),
 
+  getDashboardDrives: () => request<Array<{ node_id: number; name: string; mount: string; used_pct: number | null }>>('/dashboard/drives'),
+  getDashboard: (hours: number) => request<DashboardData>(`/dashboard?hours=${hours}`),
+
   getLatestAgentVersion: () => request<{ version: string | null }>('/nodes/agents/latest-version'),
   pushAgentUpdate: (body: { node_ids?: number[]; all?: boolean; outdated_only?: boolean }) =>
     request<{ queued: Array<{ node_id: number; command_id: number }>; count: number }>('/nodes/agents/update', {
@@ -471,6 +474,26 @@ export type LogQueryParams = {
 
 export type NodeStatus = 'pending' | 'online' | 'offline' | 'stale' | 'decommissioned'
 export type OsType = 'darwin' | 'windows' | 'linux' | 'unraid' | 'Home Assistant OS'
+
+export interface DashboardTrendPoint {
+  t: number            // bucket start, epoch ms
+  cpu: number | null
+  mem: number | null
+  disk: number | null
+  sent: number | null  // fleet-wide Mbps (sum across nodes)
+  recv: number | null
+  nodes: number        // nodes that reported in this bucket
+}
+
+export interface DashboardData {
+  hours: number
+  bucket_seconds: number
+  trend: DashboardTrendPoint[]
+  top_cpu: Array<{ id: number; name: string; value: number }>
+  top_mem: Array<{ id: number; name: string; value: number }>
+  disks: Array<{ id: number; name: string; mount: string; used_pct: number; free_gb: number | null; total_gb: number | null }>
+  by_os: Array<{ os: string; count: number }>
+}
 
 export interface NodeSummary {
   id: number

@@ -259,6 +259,79 @@ function LogForwardTester({ host, port, protocol }: { host: string; port: number
   )
 }
 
+/** Shell-style match for the ignored-drives patterns: * is the only wildcard. */
+function globMatch(pattern: string, text: string): boolean {
+  const re = pattern.split('*').map(p => p.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*')
+  return new RegExp(`^${re}$`).test(text)
+}
+
+function DrivePicker({ patterns, drives, onChange }: {
+  patterns: string[]; drives: string[]; onChange: (v: string[]) => void
+}) {
+  const [found, setFound] = useState<Array<{ node_id: number; name: string; mount: string; used_pct: number | null }> | null>(null)
+  useEffect(() => { api.getDashboardDrives().then(setFound).catch(() => setFound([])) }, [])
+  if (!found || found.length === 0) return null
+
+  const toggle = (key: string, on: boolean) => onChange(on ? [...drives, key] : drives.filter(k => k !== key))
+
+  // Per node, a top-level folder holding two or more mounts (/snap/core20/…,
+  // /snap/lxd/…) is offered as one tick for the whole folder — the repeating
+  // sub-mounts are what bury the list, and new ones keep appearing.
+  const nodes = [...new Set(found.map(d => d.node_id))].map(id => {
+    const mine = found.filter(d => d.node_id === id)
+    const top = (m: string) => m.split('/').filter(Boolean)[0]
+    const depth = (m: string) => m.split('/').filter(Boolean).length
+    const families = new Map<string, typeof mine>()
+    for (const d of mine) if (depth(d.mount) > 1) families.set(top(d.mount), [...(families.get(top(d.mount)) ?? []), d])
+    const grouped = new Set([...families].filter(([, v]) => v.length > 1).map(([k]) => k))
+    return {
+      id, name: mine[0].name,
+      groups: [...grouped].map(g => ({ folder: g, members: families.get(g)! })),
+      singles: mine.filter(d => !(depth(d.mount) > 1 && grouped.has(top(d.mount)))),
+    }
+  })
+
+  const row = (d: { node_id: number; mount: string; used_pct: number | null }, indent: boolean, lockedBy: string | null) => {
+    const key = `${d.node_id}:${d.mount}`
+    const ticked = drives.includes(key)
+    const via = lockedBy ?? (ticked ? null : patterns.find(p => globMatch(p, d.mount)) ?? null)
+    return (
+      <label key={key} className={`flex items-center gap-3 py-1.5 text-sm text-white cursor-pointer ${indent ? 'pl-9 pr-3' : 'px-3'}`}>
+        <input type="checkbox" checked={ticked || via !== null} disabled={via !== null} onChange={() => toggle(key, !ticked)} />
+        <span className="flex-1 truncate font-mono">{d.mount}</span>
+        {via && <span className="text-xs text-gray-500 font-mono">via {via}</span>}
+        <span className="text-xs font-mono w-10 text-right">{d.used_pct == null ? '—' : `${Math.round(d.used_pct)}%`}</span>
+      </label>
+    )
+  }
+
+  return (
+    <div className="mb-3 max-h-72 overflow-y-auto border border-gray-700">
+      {nodes.map(n => (
+        <div key={n.id} className="border-b border-gray-800 last:border-0">
+          <p className="px-3 py-1.5 text-xs uppercase tracking-widest text-gray-400 bg-gray-800/40">{n.name}</p>
+          {n.groups.map(g => {
+            const pat = `/${g.folder}/*`
+            const key = `${n.id}:${pat}`
+            const ticked = drives.includes(key)
+            return (
+              <div key={key}>
+                <label className="flex items-center gap-3 px-3 py-1.5 text-sm text-white cursor-pointer">
+                  <input type="checkbox" checked={ticked} onChange={() => toggle(key, !ticked)} />
+                  <span className="flex-1 font-mono">{pat}</span>
+                  <span className="text-xs text-gray-500">{g.members.length} drives, including ones found later</span>
+                </label>
+                {g.members.map(m => row(m, true, ticked ? pat : null))}
+              </div>
+            )
+          })}
+          {n.singles.map(d => row(d, false, null))}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function Section({
   title, help, children, onSave, saving, saved, error,
 }: {
@@ -1296,7 +1369,7 @@ export default function Settings() {
     setGeneralSaving(true); setGeneralSaved(false); setGeneralError('')
     try {
       const subset: Settings = {}
-      for (const k of ['app_name', 'base_url', 'timezone', 'agent_checkin_interval_sec', 'agent_speedtest_interval_sec', 'alert_host_down_enabled']) if (k in settings) subset[k] = settings[k]
+      for (const k of ['app_name', 'base_url', 'timezone', 'agent_url', 'agent_checkin_interval_sec', 'agent_speedtest_interval_sec', 'alert_host_down_enabled']) if (k in settings) subset[k] = settings[k]
       await api.bulkUpdateSettings(subset)
       await api.setPort(portValue)
       await load()
@@ -1309,7 +1382,7 @@ export default function Settings() {
     }
   }
 
-  const storageSave = useSave(['alert_event_retention_days'], settings, load)
+  const storageSave = useSave(['alert_event_retention_days', 'disk_exclude_mounts', 'disk_exclude_drives'], settings, load)
   const logForwardSave = useSave([
     'log_forward_enabled', 'log_forward_host', 'log_forward_port',
     'log_forward_protocol', 'log_forward_level', 'log_forward_app_name',
@@ -1559,6 +1632,9 @@ export default function Settings() {
           <Field label="Base URL" hint="Used for redirect URIs and notification links">
             <TextInput value={str('base_url')} onChange={v => set('base_url', v)} placeholder="http://SERVER-IP:8767" />
           </Field>
+          <Field label="Agent URL" hint="The address agents use to reach this server directly. The Enrollment page builds its install command from it. Leave blank to use the address you opened this page on — which is wrong if you reach it through pktHub, since the hub does not serve the installers.">
+            <TextInput value={str('agent_url')} onChange={v => set('agent_url', v)} placeholder="http://SERVER-IP:8764" />
+          </Field>
           <Field label="Check-in interval" hint="How often nodes call home — also how quickly a queued command, reboot/shutdown, or message reaches a node. Lower = faster delivery but more load and network chatter across every enrolled node.">
             <div className="flex items-center gap-3">
               <NumberInput value={num('agent_checkin_interval_sec', 60)} onChange={v => set('agent_checkin_interval_sec', v)} min={15} max={3600} />
@@ -1735,6 +1811,21 @@ export default function Settings() {
               <NumberInput value={num('alert_event_retention_days', 90)} onChange={v => set('alert_event_retention_days', v)} min={1} max={3650} />
               <span className="text-sm text-white">days</span>
             </div>
+          </Field>
+          <Field label="Ignored drives" hint="Tick the drives to leave out of the dashboard's Disk pressure list and the disk widget. They still appear on each node's Storage tab. Where a node has many mounts under one folder (such as /snap) there is a single tick for the whole folder, which also covers ones found later. To hide a mount on every node instead, add a pattern below — one per line, * matches anything.">
+            <DrivePicker
+              patterns={Array.isArray(settings.disk_exclude_mounts) ? (settings.disk_exclude_mounts as string[]) : []}
+              drives={Array.isArray(settings.disk_exclude_drives) ? (settings.disk_exclude_drives as string[]) : []}
+              onChange={v => set('disk_exclude_drives', v)}
+            />
+            <textarea
+              rows={4}
+              value={Array.isArray(settings.disk_exclude_mounts) ? (settings.disk_exclude_mounts as string[]).join('\n') : ''}
+              onChange={e => set('disk_exclude_mounts', e.target.value.split('\n').map(l => l.trim()).filter(Boolean))}
+              placeholder={'/snap/*\n/dev'}
+              spellCheck={false}
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
           </Field>
           <Field label="Manual cleanup" hint="Immediately purge alert events older than the retention period above, and metrics history older than 90 days">
             <div className="flex items-center gap-3 flex-wrap">
