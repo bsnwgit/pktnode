@@ -128,6 +128,8 @@ bcrypt plus JWT, with TOTP available. Roles `admin` / `analyst` / `viewer`.
 
 | Symptom | Cause | Fix |
 |---|---|---|
+| "Too many failed sign-in attempts from this address" (HTTP 429) | The address made too many failed sign-ins and is blocked for a while, even with correct credentials. Behind a proxy on another host every user shares the proxy's address | It ends by itself (the message says how long). Raise *Failed sign-ins per address* under Settings -> Security -> Auth if real users are hitting it |
+| "This account is locked after repeated failed logins" | Too many failed logins: locked 30 minutes the first time, until an admin unlocks it the second time | An admin clicks the unlock icon on Settings -> Security -> Users, or run `scripts/unlock_user.py <username>` on the server |
 | 401 immediately after logging in | Clock skew invalidates the token's `exp` | `timedatectl`; fix NTP |
 | **TOTP codes always rejected** | Clock skew — TOTP is time-based and unforgiving | Fix NTP on the server *and* on the device generating codes |
 | Cannot manage enrolment tokens | Token management is admin-only | Needs `admin` |
