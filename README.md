@@ -1,6 +1,10 @@
 # pktNode
 
 <p align="center">
+  <img src="docs/screenshots/social-preview.png" alt="pktNode — Manage every Mac, Windows and Linux endpoint" width="900">
+</p>
+
+<p align="center">
   <img src="lockup-256h.png" alt="pktNode" height="64">
 </p>
 
@@ -27,6 +31,14 @@ over the same always-open control channel.
 **Default port:** `8764` (HTTP)
 
 ---
+
+## Why pktNode
+
+- **A lightweight Go agent.** Enrolls with the server and checks in on an interval, reporting hardware and software inventory and live resource usage.
+- **Remote actions.** Queue service restarts, reboot or shutdown, and agent self-update.
+- **Hands-on when you need it.** Open an interactive shell (Live Terminal), browse and transfer files, or force an immediate check-in, all over the same always-open control channel.
+- **Part of a suite.** One of ten self-hosted pkt apps that share one architecture (FastAPI + React), `admin` / `analyst` / `viewer` roles and a suite token. pktNode installs and runs standalone, so take only what you need.
+- **Self-hosted, source-available.** SQLite and an installer script. Sign in with local accounts or SAML 2.0 SSO. Free for noncommercial use under the [PolyForm Noncommercial License](LICENSE).
 
 ## Table of Contents
 
