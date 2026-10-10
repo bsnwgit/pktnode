@@ -114,10 +114,16 @@ async def lifespan(app: FastAPI):
     await enrollment_cleanup.start()
     log.info("Enrollment token cleanup started")
 
+    import asyncio
+    from app.self_update import run_forever as self_update_run_forever
+    self_update_task = asyncio.create_task(self_update_run_forever())
+    app.state.self_update_task = self_update_task
+
     yield
 
     # ── Shutdown ──────────────────────────────────────────────────────────────
     log.info("pktNode shutting down")
+    self_update_task.cancel()
     await engine.stop()
     await cleanup.stop()
     await backup_scheduler.stop()
