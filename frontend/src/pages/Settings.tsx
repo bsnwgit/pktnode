@@ -1,4 +1,5 @@
 import { Component, Fragment, useEffect, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { api, getToken, User, UserIn, SslStatus, UserApiKey, GroupInfo, GroupOverride } from '../api/client'
 import { useAutoRefresh } from '../store/autoRefresh'
 import { useAuth } from '../store/auth'
@@ -1304,8 +1305,11 @@ export default function Settings() {
   const [showOnPhone, setShowOnPhone] = useState(false)
   const { user: me }          = useAuth()
   const isAdmin               = me?.role === 'admin'
-  const [tab, setTab]         = useState<TabId>('general')
-  const [section, setSection] = useState<SectionId>(sectionOfTab('general'))
+  const [searchParams]   = useSearchParams()
+  const initialTab        = searchParams.get('tab') as TabId | null
+  const startTab: TabId   = initialTab && TABS.some(t => t.id === initialTab) ? initialTab : 'general'
+  const [tab, setTab]         = useState<TabId>(startTab)
+  const [section, setSection] = useState<SectionId>(sectionOfTab(startTab))
   const selectSection = (s: SectionId) => {
     setSection(s)
     const firstVisible = TABS.filter(t => !t.adminOnly || isAdmin).find(t => sectionOfTab(t.id) === s)
